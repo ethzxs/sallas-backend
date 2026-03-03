@@ -66,9 +66,9 @@ function sessionPath(companyId, membershipId) {
 }
 
 // Clients em memória (um por membership)
-const clients = new Map(); // key = `${companyId}:${membershipId}` -> { client, lastQrDataUrl, status }
-// keys que estão em processo de inicialização (para evitar inicializações concorrentes)
-const initializing = new Set();
+const clients = new Map(); // key = `${companyId}:${membershipId}` -> holder
+// initPromises: single-flight promisses de inicialização por key
+const initPromises = new Map(); // key -> Promise resolving to holder
 
 // Simple send mutex to avoid concurrent sends + throttle mínimo
 let SEND_LOCK = Promise.resolve();
@@ -159,30 +159,35 @@ async function getOrCreateClient(companyId, membershipId) {
   if (clients.has(key)) return clients.get(key);
 
   // se já estiver inicializando, retorna o holder existente (ou temporário)
-  if (initializing.has(key)) {
+  if (initPromises.has(key)) {
     const existing = clients.get(key);
     if (existing) return existing;
-    return { client: null, lastQrDataUrl: null, status: "starting" };
+    return { client: null, lastQrDataUrl: null, status: "starting", hasQr: false };
   }
 
-  // delega para builder por key
+  // delega para builder por key (single-flight garantido dentro)
   return await buildClientForKey(key);
 }
 
 function buildClientForKey(key) {
   // retorna Promise resolving to holder
-  return (async () => {
+  if (initPromises.has(key)) return initPromises.get(key);
+
+  const promise = (async () => {
     ensureDir(SESSION_DIR);
     ensureDir(AUTH_DIR);
 
     const holder = {
       client: null,
       lastQrDataUrl: null,
+      lastQrRaw: null,
+      lastQrAt: null,
+      lastQrLogAt: null,
+      hasQr: false,
       status: "starting",
       WA_READY: false,
+      key,
     };
-    // guarda a key para permitir restarts fáceis
-    holder.key = key;
 
     const clientId = `session-${key}`;
 
@@ -218,14 +223,38 @@ function buildClientForKey(key) {
     holder.client = client;
 
     client.on("qr", async (qr) => {
-      holder.status = "qr";
-      holder.lastQrDataUrl = await QRCode.toDataURL(qr);
-      console.log(`[WPP] QR gerado para ${key}`);
+      try {
+        holder.status = "qr";
+        holder.hasQr = true;
+        holder.lastQrRaw = qr;
+        holder.lastQrAt = Date.now();
+
+        const now = Date.now();
+        const shouldComputeDataUrl = !holder.lastQrDataUrl || !holder.lastQrLogAt || (now - holder.lastQrLogAt) > 10000;
+
+        if (shouldComputeDataUrl) {
+          // computa dataUrl (custo) apenas quando for o primeiro QR ou passou >10s
+          try {
+            holder.lastQrDataUrl = await QRCode.toDataURL(qr);
+          } catch (e) {
+            // se falhar, não interrompemos; apenas armazenamos o raw
+            console.warn('[WPP] QR -> toDataURL failed', e?.message || e);
+          }
+          holder.lastQrLogAt = Date.now();
+          console.log(`[WPP] QR gerado para ${key}`);
+        } else {
+          // apenas atualiza timestamps/flags; evita trabalho pesado e logs repetidos
+        }
+      } catch (e) {
+        console.warn('[WPP] qr handler failed', e?.message || e);
+      }
     });
 
     client.on("ready", () => {
       holder.status = "ready";
       holder.lastQrDataUrl = null;
+      holder.lastQrRaw = null;
+      holder.hasQr = false;
       holder.WA_READY = true;
       console.log(`[WPP] Ready: ${key}`);
     });
@@ -237,6 +266,7 @@ function buildClientForKey(key) {
     client.on("auth_failure", (msg) => {
       holder.status = "auth_failure";
       holder.WA_READY = false;
+      holder.error = String(msg || 'auth_failure');
       console.log(`[WPP] Auth failure ${key}:`, msg);
     });
 
@@ -255,39 +285,43 @@ function buildClientForKey(key) {
     });
 
     client.on("error", (err) => {
-      // marcar como não-ready em erros críticos
       try { holder.WA_READY = false; } catch (_) {}
       console.log(`[WPP] ERROR ${key}:`, err);
     });
 
     // registra ANTES de inicializar para evitar corrida
     clients.set(key, holder);
-    initializing.add(key);
 
     try {
       console.log('[WPP] initializing...', key);
       await client.initialize();
       console.log('[WPP] initialize done', key);
+      holder.status = holder.status === 'qr' ? 'qr' : 'ready';
     } catch (err) {
-      console.error('[WPP] initialize failed (continuing API up):', err);
+      console.error('[WPP] initialize failed (continuing API up):', err?.message || err);
+      holder.status = 'error';
+      holder.error = String(err?.message || err);
     } finally {
-      try { initializing.delete(key); } catch (_) {}
+      try { initPromises.delete(key); } catch (_) {}
     }
+
     return holder;
   })();
+
+  initPromises.set(key, promise);
+  return promise;
 }
 
 async function hardRestartClient(key) {
   const holder = clients.get(key);
 
   // se já está inicializando, só espera terminar
-  if (initializing.has(key)) {
-    for (let i = 0; i < 40; i++) {
-      await new Promise(r => setTimeout(r, 250));
-      const h = clients.get(key);
-      if (h?.WA_READY) return h;
-    }
-    return clients.get(key);
+  if (initPromises.has(key)) {
+    try {
+      await initPromises.get(key);
+    } catch (_) {}
+    const h = clients.get(key);
+    if (h?.WA_READY) return h;
   }
 
   console.log('[WPP] hardRestartClient ->', key);
@@ -606,13 +640,22 @@ app.get("/wpp/status", async (req, res) => {
     }
 
     const key = keyOf(companyId, membershipId);
-    const holder = clients.get(key);
+    let holder = clients.get(key);
+
+    // se não existe, cria holder temporário e dispara init em background (single-flight)
+    if (!holder) {
+      holder = { client: null, lastQrDataUrl: null, lastQrRaw: null, status: 'starting', hasQr: false, key };
+      clients.set(key, holder);
+      if (!initPromises.has(key)) {
+        buildClientForKey(key).catch(e => console.error('[wpp/status] init background failed', e));
+      }
+    }
 
     // persistir status básico no Supabase (não bloquear resposta)
     try { await upsertWhatsappSession({ companyId, membershipId, status: holder?.status || "disconnected" }); } catch(_) {}
 
-    if (!holder) {
-      return res.json({ ok: true, status: "disconnected", hasQr: false });
+    if (holder.status === 'error') {
+      return res.json({ ok: false, status: 'error', message: holder.error || 'initialize_failed' });
     }
 
     return res.json({
@@ -634,14 +677,34 @@ app.get("/wpp/qr", async (req, res) => {
 
   try {
     const key = keyOf(companyId, membershipId);
-    const existing = clients.get(key);
-    if (!existing) {
-      // dispara init em background e responde imediatamente
-      getOrCreateClient(companyId, membershipId).catch(e => console.error('[wpp/qr] init background failed', e));
-      return res.json({ ok: true, status: "starting", qrDataUrl: null });
+    const holder = clients.get(key);
+
+    // se não existe holder, cria um temporário e dispara init em background (single-flight)
+    if (!holder) {
+      const tmp = { client: null, lastQrDataUrl: null, lastQrRaw: null, status: 'starting', hasQr: false, key };
+      clients.set(key, tmp);
+      if (!initPromises.has(key)) {
+        buildClientForKey(key).catch(e => console.error('[wpp/qr] init background failed', e));
+      }
+      return res.json({ ok: true, status: "starting", hasQr: false });
     }
 
-    return res.json({ ok: true, status: existing.status, qrDataUrl: existing.lastQrDataUrl });
+    // se entrou em erro durante initialize
+    if (holder.status === 'error') {
+      return res.json({ ok: false, status: 'error', message: holder.error || 'initialize_failed' });
+    }
+
+    // se temos QR em cache e status === 'qr', retorna imediatamente
+    if (holder.status === 'qr' && holder.lastQrDataUrl) {
+      return res.json({ ok: true, status: 'qr', qrDataUrl: holder.lastQrDataUrl, hasQr: true });
+    }
+
+    // se está iniciando e ainda não tem QR, responde starting sem tentar reinicializar
+    if (holder.status === 'starting' && !holder.lastQrDataUrl) {
+      return res.json({ ok: true, status: 'starting', hasQr: false });
+    }
+
+    return res.json({ ok: true, status: holder.status, qrDataUrl: holder.lastQrDataUrl, hasQr: Boolean(holder.lastQrDataUrl) });
   } catch (e) {
     const msg = String(e?.message || e || "");
     console.error("[/wpp/qr] FAILED:", e);
