@@ -10,6 +10,7 @@ import QRCode from "qrcode";
 import crypto from "crypto";
 import pkg from "whatsapp-web.js";
 const { Client, LocalAuth, MessageMedia } = pkg;
+import puppeteer from "puppeteer";
 
 async function rmrfSafe(targetPath) {
   if (!targetPath) return;
@@ -186,6 +187,16 @@ function buildClientForKey(key) {
 
     const clientId = `session-${key}`;
 
+    const envChrome = (process.env.PUPPETEER_EXECUTABLE_PATH || "").trim();
+    const envHasWildcard = envChrome.includes("*");
+    const envExists = envChrome && !envHasWildcard && fs.existsSync(envChrome);
+
+    const resolvedChromePath = envExists ? envChrome : puppeteer.executablePath();
+
+    console.log("[WPP] chrome env path =", envChrome || "(empty)");
+    console.log("[WPP] chrome env usable =", envExists);
+    console.log("[WPP] chrome executablePath =", resolvedChromePath);
+
     const client = new Client({
       authStrategy: new LocalAuth({
         clientId,
@@ -202,7 +213,7 @@ function buildClientForKey(key) {
           "--no-zygote",
           "--disable-features=site-per-process",
         ],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        executablePath: resolvedChromePath,
       },
     });
 
