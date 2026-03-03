@@ -200,6 +200,7 @@ function buildClientForKey(key) {
       }),
       puppeteer: {
         headless: "new",
+        protocolTimeout: 120000,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
