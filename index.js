@@ -634,19 +634,14 @@ app.get("/wpp/qr", async (req, res) => {
 
   try {
     const key = keyOf(companyId, membershipId);
-
-    
-
     const existing = clients.get(key);
-    if (existing && existing.status === "ready") {
-      return res.json({ ok: true, status: "ready", qrDataUrl: null });
+    if (!existing) {
+      // dispara init em background e responde imediatamente
+      getOrCreateClient(companyId, membershipId).catch(e => console.error('[wpp/qr] init background failed', e));
+      return res.json({ ok: true, status: "starting", qrDataUrl: null });
     }
 
-    const holder = await getOrCreateClient(companyId, membershipId);
-
-    try { await upsertWhatsappSession({ companyId, membershipId, status: holder.status }); } catch(_) {}
-
-    return res.json({ ok: true, status: holder.status, qrDataUrl: holder.lastQrDataUrl });
+    return res.json({ ok: true, status: existing.status, qrDataUrl: existing.lastQrDataUrl });
   } catch (e) {
     const msg = String(e?.message || e || "");
     console.error("[/wpp/qr] FAILED:", e);
