@@ -118,7 +118,6 @@ function enqueueSend(fn) {
 const SESSION_DIR =
   process.env.SESSION_DIR ||
   (process.platform === "win32" ? "C:\\wpp" : "/tmp/wpp");
-
 const AUTH_DIR = path.join(SESSION_DIR, "auth");
 
 function safeId(s) {
@@ -187,15 +186,12 @@ function buildClientForKey(key) {
 
     const clientId = `session-${key}`;
 
-    const envChrome = (process.env.PUPPETEER_EXECUTABLE_PATH || "").trim();
-    const envHasWildcard = envChrome.includes("*");
-    const envExists = envChrome && !envHasWildcard && fs.existsSync(envChrome);
+    const resolvedExecPath =
+      process.env.PUPPETEER_EXECUTABLE_PATH ||
+      (typeof puppeteer?.executablePath === "function" ? puppeteer.executablePath() : undefined);
 
-    const resolvedChromePath = envExists ? envChrome : puppeteer.executablePath();
-
-    console.log("[WPP] chrome env path =", envChrome || "(empty)");
-    console.log("[WPP] chrome env usable =", envExists);
-    console.log("[WPP] chrome executablePath =", resolvedChromePath);
+    console.log("[WPP] chrome env path =", process.env.PUPPETEER_EXECUTABLE_PATH || "");
+    console.log("[WPP] chrome resolvedExecPath =", resolvedExecPath || "(empty)");
 
     const client = new Client({
       authStrategy: new LocalAuth({
@@ -213,7 +209,7 @@ function buildClientForKey(key) {
           "--no-zygote",
           "--disable-features=site-per-process",
         ],
-        executablePath: resolvedChromePath,
+        executablePath: resolvedExecPath,
       },
     });
 
