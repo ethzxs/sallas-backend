@@ -263,9 +263,11 @@ function buildClientForKey(key) {
     initializing.add(key);
 
     try {
+      console.log('[WPP] initializing...', key);
       await client.initialize();
+      console.log('[WPP] initialize done', key);
     } catch (err) {
-      console.error('[WPP] initialize failed (continuing API up):', err?.message || err);
+      console.error('[WPP] initialize failed (continuing API up):', err);
     } finally {
       try { initializing.delete(key); } catch (_) {}
     }
@@ -631,12 +633,7 @@ app.get("/wpp/qr", async (req, res) => {
   try {
     const key = keyOf(companyId, membershipId);
 
-    if (clients.has(key)) {
-      const c = clients.get(key);
-      if (c.info) {
-        return res.json({ ok: true, status: "ready", qrDataUrl: null });
-      }
-    }
+    
 
     const existing = clients.get(key);
     if (existing && existing.status === "ready") {
@@ -683,29 +680,6 @@ app.post("/wpp/reset-session", async (req, res) => {
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
-});
-
-// POST /wpp/reset
-// Body: { key }
-app.post('/wpp/reset', async (req, res) => {
-  try {
-    const { key } = req.body || {};
-    if (!key) return res.status(400).json({ ok: false, error: 'key is required' });
-
-    const holder = clients.get(key);
-    if (holder && holder.client) {
-      try { await holder.client.destroy(); } catch (e) { /* ignore */ }
-    }
-
-    try { clients.delete(key); } catch (_) {}
-
-    const dir = path.join(AUTH_DIR, `session-${key}`);
-    await rmrfSafe(dir);
-
-    return res.json({ ok: true });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
