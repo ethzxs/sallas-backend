@@ -202,6 +202,7 @@ function buildClientForKey(key) {
           "--no-zygote",
           "--disable-features=site-per-process",
         ],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       },
     });
 
