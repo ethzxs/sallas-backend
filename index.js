@@ -686,6 +686,29 @@ app.post("/wpp/reset-session", async (req, res) => {
   }
 });
 
+// POST /wpp/reset
+// Body: { key }
+app.post('/wpp/reset', async (req, res) => {
+  try {
+    const { key } = req.body || {};
+    if (!key) return res.status(400).json({ ok: false, error: 'key is required' });
+
+    const holder = clients.get(key);
+    if (holder && holder.client) {
+      try { await holder.client.destroy(); } catch (e) { /* ignore */ }
+    }
+
+    try { clients.delete(key); } catch (_) {}
+
+    const dir = path.join(AUTH_DIR, `session-${key}`);
+    await rmrfSafe(dir);
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 /**
  * POST /wpp/send
  * Body:
