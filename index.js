@@ -114,7 +114,10 @@ function enqueueSend(fn) {
   return SEND_LOCK;
 }
 
-const SESSION_DIR = "C:\\wpp";
+const SESSION_DIR =
+  process.env.SESSION_DIR ||
+  (process.platform === "win32" ? "C:\\wpp" : "/tmp/wpp");
+
 const AUTH_DIR = path.join(SESSION_DIR, "auth");
 
 function safeId(s) {
