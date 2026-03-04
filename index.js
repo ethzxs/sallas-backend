@@ -66,11 +66,7 @@ function sessionPath(companyId, membershipId) {
 }
 
 // moved client/session logic to src/wpp/clientManager.js
-import { getOrCreateClient, clients, SESSION_DIR as CM_SESSION_DIR, AUTH_DIR as CM_AUTH_DIR, buildClientForKey } from "./src/wpp/clientManager.js";
-
-// Use exported SESSION_DIR/AUTH_DIR when available, otherwise compute locally.
-const SESSION_DIR = CM_SESSION_DIR || (process.env.SESSION_DIR || (process.platform === "win32" ? "C:\\wpp" : "/tmp/wpp"));
-const AUTH_DIR = CM_AUTH_DIR || path.join(SESSION_DIR, "auth");
+import { getOrCreateClient, clients, keyOf, upsertWhatsappSession, initPromises, SESSION_DIR, AUTH_DIR, buildClientForKey } from "./src/wpp/clientManager.js";
 
 async function hardRestartClient(key) {
   const holder = clients.get(key);
