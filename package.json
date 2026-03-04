@@ -5,10 +5,10 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node scripts/ensure-chrome.cjs && node index.js",
     "dev": "nodemon index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "postinstall": "npx puppeteer browsers install chrome",
+    "postinstall": "PUPPETEER_CACHE_DIR=./.cache/puppeteer npx puppeteer browsers install chrome",
     "verify:chrome": "node -e \"const fs=require('fs'); const p=require('puppeteer'); const ep=typeof p.executablePath==='function'?p.executablePath():''; console.log('PUPPETEER_EXECUTABLE_PATH=',process.env.PUPPETEER_EXECUTABLE_PATH||''); console.log('puppeteer.executablePath()=',ep); console.log('exists=',ep?fs.existsSync(ep):false);\""
   },
   "keywords": [],
