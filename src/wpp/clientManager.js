@@ -127,8 +127,8 @@ export function buildClientForKey(key) {
       }),
       puppeteer: {
         headless: "new",
-        protocolTimeout: 300000,
-        timeout: 300000,
+        protocolTimeout: 900000,
+        timeout: 900000,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -137,6 +137,10 @@ export function buildClientForKey(key) {
           "--no-first-run",
           "--no-zygote",
           "--disable-features=site-per-process",
+          "--window-size=1280,720",
+          "--disable-background-timer-throttling",
+          "--disable-backgrounding-occluded-windows",
+          "--disable-renderer-backgrounding",
         ],
         executablePath: resolvedExecPath,
       },
