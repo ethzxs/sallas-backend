@@ -119,11 +119,12 @@ export function buildClientForKey(key) {
 
     // Antes de criar um novo client, garantir que não exista outro client ativo
     for (const [otherKey, otherHolder] of Array.from(clients.entries())) {
-      if (otherKey !== key && otherHolder && otherHolder.client) {
+      if (otherKey !== key && otherHolder) {
         try {
-          await otherHolder.client.destroy();
+          if (otherHolder.client) await otherHolder.client.destroy();
         } catch (e) {}
         try { clients.delete(otherKey); } catch (_) {}
+        try { initPromises.delete(otherKey); } catch (_) {}
         console.log('[WPP] destroyed previous client to enforce single-session policy', otherKey);
       }
     }
@@ -209,7 +210,15 @@ export function buildClientForKey(key) {
       console.log('[WPP] initializing...', key);
       await client.initialize();
       console.log('[WPP] initialize done', key);
-      holder.status = holder.status === 'qr' ? 'qr' : 'ready';
+      // Não forçar 'ready' automaticamente — manter 'qr' se houver,
+      // ou marcar 'ready' somente se o evento 'ready' já definiu WA_READY.
+      if (holder.status === 'qr') {
+        // manter 'qr'
+      } else if (holder.WA_READY) {
+        holder.status = 'ready';
+      } else {
+        // manter status atual (provavelmente 'starting')
+      }
     } catch (err) {
       console.error('[WPP] initialize failed (continuing API up):', err?.message || err);
       holder.status = 'error';
