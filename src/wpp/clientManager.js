@@ -3,7 +3,6 @@ import fsp from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from 'url';
-import QRCode from "qrcode";
 import pkg from "whatsapp-web.js";
 const { Client, LocalAuth } = pkg;
 import puppeteer from "puppeteer";
@@ -86,7 +85,7 @@ export async function getOrCreateClient(companyId, membershipId) {
   if (initPromises.has(key)) {
     const existing = clients.get(key);
     if (existing) return existing;
-    return { client: null, lastQrDataUrl: null, status: "starting", hasQr: false };
+    return { client: null, lastQrRaw: null, status: "starting", hasQr: false };
   }
 
   return await buildClientForKey(key);
@@ -101,10 +100,8 @@ export function buildClientForKey(key) {
 
     const holder = {
       client: null,
-      lastQrDataUrl: null,
       lastQrRaw: null,
       lastQrAt: null,
-      lastQrLogAt: null,
       hasQr: false,
       status: "starting",
       WA_READY: false,
@@ -119,6 +116,17 @@ export function buildClientForKey(key) {
 
     console.log("[WPP] chrome env path =", process.env.PUPPETEER_EXECUTABLE_PATH || "");
     console.log("[WPP] chrome resolvedExecPath =", resolvedExecPath || "(empty)");
+
+    // Antes de criar um novo client, garantir que não exista outro client ativo
+    for (const [otherKey, otherHolder] of Array.from(clients.entries())) {
+      if (otherKey !== key && otherHolder && otherHolder.client) {
+        try {
+          await otherHolder.client.destroy();
+        } catch (e) {}
+        try { clients.delete(otherKey); } catch (_) {}
+        console.log('[WPP] destroyed previous client to enforce single-session policy', otherKey);
+      }
+    }
 
     const client = new Client({
       authStrategy: new LocalAuth({
@@ -151,19 +159,7 @@ export function buildClientForKey(key) {
         holder.hasQr = true;
         holder.lastQrRaw = qr;
         holder.lastQrAt = Date.now();
-
-        const now = Date.now();
-        const shouldComputeDataUrl = !holder.lastQrDataUrl || !holder.lastQrLogAt || (now - holder.lastQrLogAt) > 10000;
-
-        if (shouldComputeDataUrl) {
-          try {
-            holder.lastQrDataUrl = await QRCode.toDataURL(qr);
-          } catch (e) {
-            console.warn('[WPP] QR -> toDataURL failed', e?.message || e);
-          }
-          holder.lastQrLogAt = Date.now();
-          console.log(`[WPP] QR gerado para ${key}`);
-        }
+        console.log(`[WPP] QR raw recebido para ${key}`);
       } catch (e) {
         console.warn('[WPP] qr handler failed', e?.message || e);
       }
@@ -171,7 +167,6 @@ export function buildClientForKey(key) {
 
     client.on("ready", () => {
       holder.status = "ready";
-      holder.lastQrDataUrl = null;
       holder.lastQrRaw = null;
       holder.hasQr = false;
       holder.WA_READY = true;

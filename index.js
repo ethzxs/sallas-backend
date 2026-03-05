@@ -389,7 +389,7 @@ app.get("/wpp/status", async (req, res) => {
       const active = Array.from(clients.entries()).map(([key, holder]) => ({
         key,
         status: holder?.status ?? "unknown",
-        hasQr: Boolean(holder?.lastQrDataUrl),
+        hasQr: Boolean(holder?.lastQrRaw),
       }));
 
       return res.json({ ok: true, status: "missing_params", active });
@@ -400,7 +400,7 @@ app.get("/wpp/status", async (req, res) => {
 
     // se não existe, cria holder temporário e dispara init em background (single-flight)
     if (!holder) {
-      holder = { client: null, lastQrDataUrl: null, lastQrRaw: null, status: 'starting', hasQr: false, key };
+      holder = { client: null, lastQrRaw: null, status: 'starting', hasQr: false, key };
       clients.set(key, holder);
       if (!initPromises.has(key)) {
         buildClientForKey(key).catch(e => console.error('[wpp/status] init background failed', e));
@@ -417,7 +417,7 @@ app.get("/wpp/status", async (req, res) => {
     return res.json({
       ok: true,
       status: holder.status,
-      hasQr: Boolean(holder.lastQrDataUrl),
+      hasQr: Boolean(holder.lastQrRaw),
     });
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
@@ -437,12 +437,12 @@ app.get("/wpp/qr", async (req, res) => {
 
     // se não existe holder, cria um temporário e dispara init em background (single-flight)
     if (!holder) {
-      const tmp = { client: null, lastQrDataUrl: null, lastQrRaw: null, status: 'starting', hasQr: false, key };
+      const tmp = { client: null, lastQrRaw: null, status: 'starting', hasQr: false, key };
       clients.set(key, tmp);
       if (!initPromises.has(key)) {
         buildClientForKey(key).catch(e => console.error('[wpp/qr] init background failed', e));
       }
-      return res.json({ ok: true, status: "starting", hasQr: false });
+      return res.json({ ok: true, status: "starting", hasQr: false, qrDataUrl: null });
     }
 
     // se entrou em erro durante initialize
@@ -450,17 +450,24 @@ app.get("/wpp/qr", async (req, res) => {
       return res.json({ ok: false, status: 'error', message: holder.error || 'initialize_failed' });
     }
 
-    // se temos QR em cache e status === 'qr', retorna imediatamente
-    if (holder.status === 'qr' && holder.lastQrDataUrl) {
-      return res.json({ ok: true, status: 'qr', qrDataUrl: holder.lastQrDataUrl, hasQr: true });
+    // se já está READY, devolve sem QR
+    if (holder.status === 'ready') {
+      return res.json({ ok: true, status: 'ready', hasQr: false, qrDataUrl: null });
     }
 
-    // se está iniciando e ainda não tem QR, responde starting sem tentar reinicializar
-    if (holder.status === 'starting' && !holder.lastQrDataUrl) {
-      return res.json({ ok: true, status: 'starting', hasQr: false });
+    // se temos QR raw disponível, gerar DataURL somente agora e devolver
+    if (holder.lastQrRaw) {
+      try {
+        const qrDataUrl = await QRCode.toDataURL(holder.lastQrRaw, { errorCorrectionLevel: "M", margin: 1, scale: 6 });
+        return res.json({ ok: true, status: 'qr', hasQr: true, qrDataUrl });
+      } catch (e) {
+        console.error('[WPP] failed to generate qr dataurl on demand', e);
+        return res.status(500).json({ ok: false, error: String(e?.message || e) });
+      }
     }
 
-    return res.json({ ok: true, status: holder.status, qrDataUrl: holder.lastQrDataUrl, hasQr: Boolean(holder.lastQrDataUrl) });
+    // sem QR disponível ainda
+    return res.json({ ok: true, status: 'starting', hasQr: false, qrDataUrl: null });
   } catch (e) {
     const msg = String(e?.message || e || "");
     console.error("[/wpp/qr] FAILED:", e);
