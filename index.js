@@ -662,12 +662,18 @@ app.post("/wpp/send", async (req, res) => {
         console.error('SEND ERROR:', err);
 
         if (isDetached) {
-          // Responde para quem chamou, e reinicia o processo pra subir limpo
-          try { return res.status(503).json({ ok: false, error: 'whatsapp_detached_frame_restarting' }); }
-          finally {
-            // Dá um tempo mínimo para flush do response e encerra o processo
-            setTimeout(() => process.exit(1), 250);
-          }
+          try {
+            if (holder) holder.WA_READY = false;
+          } catch (_) {}
+
+          Promise.resolve()
+            .then(() => hardRestartClient(holder?.key))
+            .catch((e) => console.warn("[WPP] hardRestartClient failed after detached frame:", e?.message || e));
+
+          return res.status(503).json({
+            ok: false,
+            error: "whatsapp_restarting",
+          });
         }
 
         return res.status(500).json({ ok: false, error: msg });
