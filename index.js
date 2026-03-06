@@ -35,11 +35,34 @@ const sb = (SB_URL && SB_SERVICE_KEY)
   : null;
 
 // Handlers globais para visibilidade de erros
-process.on('uncaughtException', (err) => {
-  console.error('uncaughtException:', err);
+// Handlers globais para visibilidade de erros
+function isIgnorablePuppeteerCloseError(err) {
+  const msg = String(err?.message || err || "");
+  return (
+    msg.includes("TargetCloseError") ||
+    msg.includes("Target closed") ||
+    msg.includes("Protocol error") ||
+    msg.includes("Runtime.callFunctionOn") ||
+    msg.includes("detached Frame") ||
+    msg.includes("Session closed") ||
+    msg.includes("Execution context was destroyed")
+  );
+}
+
+process.on("unhandledRejection", (reason) => {
+  if (isIgnorablePuppeteerCloseError(reason)) {
+    console.warn("[WPP] ignored unhandledRejection:", String(reason?.message || reason));
+    return;
+  }
+  console.error("[WPP] unhandledRejection:", reason);
 });
-process.on('unhandledRejection', (reason) => {
-  console.error('unhandledRejection:', reason);
+
+process.on("uncaughtException", (err) => {
+  if (isIgnorablePuppeteerCloseError(err)) {
+    console.warn("[WPP] ignored uncaughtException:", String(err?.message || err));
+    return;
+  }
+  console.error("[WPP] uncaughtException:", err);
 });
 
 const app = express();
@@ -88,7 +111,15 @@ async function regenerateSessionForKey(key, options = {}) {
       const holder = clients.get(key);
 
       if (holder?.client) {
-        try { await holder.client.destroy(); } catch (_) {}
+        try {
+          await holder.client.destroy();
+        } catch (err) {
+          if (isIgnorablePuppeteerCloseError(err)) {
+            console.warn("[WPP] ignored destroy error during regenerate:", String(err?.message || err));
+          } else {
+            console.error("[WPP] destroy error during regenerate:", err);
+          }
+        }
       }
 
       try { clients.delete(key); } catch (_) {}
