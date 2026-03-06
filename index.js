@@ -69,32 +69,58 @@ function sessionPath(companyId, membershipId) {
 // moved client/session logic to src/wpp/clientManager.js
 import { getOrCreateClient, clients, keyOf, upsertWhatsappSession, initPromises, SESSION_DIR, AUTH_DIR, buildClientForKey } from "./src/wpp/clientManager.js";
 
-async function hardRestartClient(key) {
-  const holder = clients.get(key);
+const restartPromises = new Map();
 
-  // se já está inicializando, só espera terminar
-  if (initPromises.has(key)) {
+function authSessionPathForKey(key) {
+  return path.join(AUTH_DIR, `session-session-${key}`);
+}
+
+async function regenerateSessionForKey(key, options = {}) {
+  const wipeAuth = options.wipeAuth !== false;
+  const rebuild = options.rebuild !== false;
+
+  if (restartPromises.has(key)) return restartPromises.get(key);
+
+  const promise = (async () => {
+    console.log('[WPP] regenerateSessionForKey start', key, { wipeAuth, rebuild });
+
     try {
-      await initPromises.get(key);
-    } catch (_) {}
-    const h = clients.get(key);
-    if (h?.WA_READY) return h;
-  }
+      const holder = clients.get(key);
 
-  console.log('[WPP] hardRestartClient ->', key);
+      if (holder?.client) {
+        try { await holder.client.destroy(); } catch (_) {}
+      }
 
-  try {
-    if (holder?.client) {
-      try { await holder.client.destroy(); } catch (e) {}
+      try { clients.delete(key); } catch (_) {}
+      try { initPromises.delete(key); } catch (_) {}
+
+      if (wipeAuth) {
+        await rmrfSafe(authSessionPathForKey(key));
+      }
+
+      if (!rebuild) {
+        console.log('[WPP] regenerateSessionForKey done', key, { status: 'reset' });
+        return { ok: true, status: 'reset' };
+      }
+
+      const newHolder = await buildClientForKey(key);
+      console.log('[WPP] regenerateSessionForKey done', key, { status: newHolder?.status || 'starting' });
+      return newHolder;
+    } catch (err) {
+      console.error('[WPP] regenerateSessionForKey failed', key, err?.message || err);
+      throw err;
+    } finally {
+      try { restartPromises.delete(key); } catch (_) {}
     }
-  } catch (e) {}
+  })();
 
-  try { clients.delete(key); } catch (e) {}
-  try { initPromises.delete(key); } catch (e) {}
+  restartPromises.set(key, promise);
+  return promise;
+}
 
-  // recria do zero
-  const newHolder = await buildClientForKey(key);
-  return newHolder;
+async function hardRestartClient(key) {
+  console.log('[WPP] hardRestartClient ->', key);
+  return await regenerateSessionForKey(key, { wipeAuth: false, rebuild: true });
 }
 
 // Safe send helper: checa estado e trata 'detached Frame' reiniciando cliente quando necessário
@@ -399,20 +425,23 @@ app.get("/wpp/status", async (req, res) => {
     const key = keyOf(companyId, membershipId);
     const holder = clients.get(key);
 
-    // NÃO criar holder nem iniciar client aqui — apenas reportar
     if (!holder) {
-      try { await upsertWhatsappSession({ companyId, membershipId, status: 'starting' }); } catch(_) {}
-      return res.json({ ok: true, status: 'starting', hasQr: false });
+      return res.json({ ok: true, status: 'not_initialized', hasQr: false });
     }
 
-    // persistir status básico no Supabase (não bloquear resposta)
     try { await upsertWhatsappSession({ companyId, membershipId, status: holder?.status || "disconnected" }); } catch(_) {}
 
-    if (holder.status === 'error') {
-      return res.json({ ok: false, status: 'error', message: holder.error || 'initialize_failed' });
-    }
-
-    return res.json({ ok: true, status: holder.status || 'starting', hasQr: Boolean(holder.lastQrRaw) });
+    return res.json({
+      ok: holder.status === 'error' ? false : true,
+      status: holder.status || 'starting',
+      hasQr: Boolean(holder.lastQrRaw),
+      error: holder.error || null,
+      waReady: Boolean(holder.WA_READY),
+      lastStatusAt: holder.lastStatusAt || null,
+      lastReadyAt: holder.lastReadyAt || null,
+      lastQrAt: holder.lastQrAt || null,
+      lastDisconnectReason: holder.lastDisconnectReason || null,
+    });
   } catch (e) {
     return res.json({ ok: false, error: String(e?.message || e) });
   }
@@ -430,34 +459,15 @@ app.get("/wpp/qr", async (req, res) => {
     if (!companyId || !membershipId) return res.json({ ok: false, error: 'missing_params', message: 'companyId e membershipId são obrigatórios' });
 
     const key = keyOf(companyId, membershipId);
-    let holder = clients.get(key);
+    const holder = clients.get(key);
 
-    // se não existe holder, cria um temporário e dispara init em background (single-flight)
     if (!holder) {
-      const tmp = { client: null, lastQrRaw: null, status: 'starting', hasQr: false, key };
-      clients.set(key, tmp);
-      if (!initPromises.has(key)) {
-        try {
-          const p = buildClientForKey(key).finally(() => { try { initPromises.delete(key); } catch(_){} });
-          try { initPromises.set(key, p); } catch(_){}
-        } catch (e) {
-          console.error('[wpp/qr] init background failed', e);
-        }
-      }
+      buildClientForKey(key).catch((e) => {
+        console.error('[wpp/qr] init background failed', e);
+      });
       return res.json({ ok: true, status: "starting", hasQr: false, qrDataUrl: null });
     }
 
-    // se entrou em erro durante initialize
-    if (holder.status === 'error') {
-      return res.json({ ok: false, status: 'error', message: holder.error || 'initialize_failed', hasQr: false, qrDataUrl: null });
-    }
-
-    // se já está READY, devolve sem QR
-    if (holder.status === 'ready') {
-      return res.json({ ok: true, status: 'ready', hasQr: false, qrDataUrl: null });
-    }
-
-    // se temos QR raw disponível, gerar DataURL somente agora e devolver (on-demand)
     if (holder.lastQrRaw) {
       try {
         const qrDataUrl = await QRCode.toDataURL(holder.lastQrRaw, { errorCorrectionLevel: "M", margin: 1, scale: 6 });
@@ -468,8 +478,31 @@ app.get("/wpp/qr", async (req, res) => {
       }
     }
 
-    // sem QR disponível ainda
-    return res.json({ ok: true, status: 'starting', hasQr: false, qrDataUrl: null });
+    if (holder.status === 'ready' || holder.WA_READY === true) {
+      return res.json({ ok: true, status: 'ready', hasQr: false, qrDataUrl: null });
+    }
+
+    if (["auth_failure", "disconnected", "error"].includes(holder.status)) {
+      regenerateSessionForKey(key, { wipeAuth: true, rebuild: true }).catch((e) => {
+        console.error('[wpp/qr] regenerate broken session failed', e);
+      });
+      return res.json({ ok: true, status: 'restarting', hasQr: false, qrDataUrl: null, message: 'session_restarting' });
+    }
+
+    if (
+      holder.status === 'starting' &&
+      !holder.lastQrRaw &&
+      !holder.WA_READY &&
+      holder.initializingAt &&
+      (Date.now() - holder.initializingAt > 90000)
+    ) {
+      regenerateSessionForKey(key, { wipeAuth: true, rebuild: true }).catch((e) => {
+        console.error('[wpp/qr] regenerate timeout session failed', e);
+      });
+      return res.json({ ok: true, status: 'restarting', hasQr: false, qrDataUrl: null, message: 'starting_timeout_restarting' });
+    }
+
+    return res.json({ ok: true, status: holder.status || 'starting', hasQr: false, qrDataUrl: null });
   } catch (e) {
     const msg = String(e?.message || e || "");
     console.error("[/wpp/qr] FAILED:", e);
@@ -487,18 +520,8 @@ app.post("/wpp/reset-session", async (req, res) => {
     if (!companyId || !membershipId) return res.json({ ok: false, error: "companyId e membershipId são obrigatórios" });
 
     const key = keyOf(companyId, membershipId);
-    const holder = clients.get(key);
-
-    if (holder && holder.client) {
-      try { await holder.client.destroy(); } catch (_) {}
-    }
-
-    try { clients.delete(key); } catch (_) {}
-    try { initPromises.delete(key); } catch (_) {}
-    const sessionPath = path.join(AUTH_DIR, `session-session-${key}`);
-    await rmrfSafe(sessionPath);
-
-    return res.json({ ok: true });
+    await regenerateSessionForKey(key, { wipeAuth: true, rebuild: false });
+    return res.json({ ok: true, status: 'reset' });
   } catch (e) {
     return res.json({ ok: false, status: 'error', message: String(e.message || e) });
   }
@@ -511,29 +534,10 @@ app.post('/wpp/regenerate-qr', async (req, res) => {
     if (!companyId || !membershipId) return res.json({ ok: false, error: "companyId e membershipId são obrigatórios" });
 
     const key = keyOf(companyId, membershipId);
-    const holder = clients.get(key);
-
-    if (holder && holder.client) {
-      try { await holder.client.destroy(); } catch (_) {}
-    }
-
-    try { clients.delete(key); } catch (_) {}
-    try { initPromises.delete(key); } catch (_) {}
-
-    const sessionPath = path.join(AUTH_DIR, `session-session-${key}`);
-    await rmrfSafe(sessionPath);
-
-    // iniciar nova tentativa em background (fire-and-forget)
-    if (!initPromises.has(key)) {
-      try {
-        const p = buildClientForKey(key).finally(() => { try { initPromises.delete(key); } catch(_){} });
-        try { initPromises.set(key, p); } catch(_){}
-      } catch (e) {
-        console.error('[wpp/regenerate-qr] buildClientForKey failed', e);
-      }
-    }
-
-    return res.json({ ok: true, status: 'starting' });
+    regenerateSessionForKey(key, { wipeAuth: true, rebuild: true }).catch((e) => {
+      console.error('[wpp/regenerate-qr] regenerateSessionForKey failed', e);
+    });
+    return res.json({ ok: true, status: 'restarting' });
   } catch (e) {
     return res.json({ ok: false, status: 'error', message: String(e?.message || e) });
   }

@@ -98,6 +98,7 @@ export function buildClientForKey(key) {
     ensureDir(SESSION_DIR);
     ensureDir(AUTH_DIR);
 
+    const now = Date.now();
     const holder = {
       client: null,
       lastQrRaw: null,
@@ -106,6 +107,14 @@ export function buildClientForKey(key) {
       status: "starting",
       WA_READY: false,
       key,
+      error: null,
+      createdAt: now,
+      initializingAt: now,
+      lastStatusAt: now,
+      lastDisconnectReason: null,
+      lastAuthFailure: null,
+      lastAuthenticatedAt: null,
+      lastReadyAt: null,
     };
 
     const clientId = `session-${key}`;
@@ -117,17 +126,7 @@ export function buildClientForKey(key) {
     console.log("[WPP] chrome env path =", process.env.PUPPETEER_EXECUTABLE_PATH || "");
     console.log("[WPP] chrome resolvedExecPath =", resolvedExecPath || "(empty)");
 
-    // Antes de criar um novo client, garantir que não exista outro client ativo
-    for (const [otherKey, otherHolder] of Array.from(clients.entries())) {
-      if (otherKey !== key && otherHolder) {
-        try {
-          if (otherHolder.client) await otherHolder.client.destroy();
-        } catch (e) {}
-        try { clients.delete(otherKey); } catch (_) {}
-        try { initPromises.delete(otherKey); } catch (_) {}
-        console.log('[WPP] destroyed previous client to enforce single-session policy', otherKey);
-      }
-    }
+    // NOTE: removed single-session enforcement — do not destroy other clients here
 
     const client = new Client({
       authStrategy: new LocalAuth({
@@ -160,6 +159,10 @@ export function buildClientForKey(key) {
         holder.hasQr = true;
         holder.lastQrRaw = qr;
         holder.lastQrAt = Date.now();
+        holder.WA_READY = false;
+        holder.error = null;
+        holder.lastStatusAt = Date.now();
+        // persistência via upsertWhatsappSession requer company/membership; não disponível aqui
         console.log(`[WPP] QR raw recebido para ${key}`);
       } catch (e) {
         console.warn('[WPP] qr handler failed', e?.message || e);
@@ -169,25 +172,41 @@ export function buildClientForKey(key) {
     client.on("ready", () => {
       holder.status = "ready";
       holder.lastQrRaw = null;
+      holder.lastQrAt = null;
       holder.hasQr = false;
       holder.WA_READY = true;
+      holder.error = null;
+      holder.lastReadyAt = Date.now();
+      holder.lastStatusAt = Date.now();
       console.log(`[WPP] Ready: ${key}`);
     });
 
     client.on("authenticated", () => {
       console.log(`[WPP] Authenticated: ${key}`);
+      holder.lastAuthenticatedAt = Date.now();
+      holder.error = null;
     });
 
     client.on("auth_failure", (msg) => {
       holder.status = "auth_failure";
       holder.WA_READY = false;
+      holder.hasQr = false;
+      holder.lastQrRaw = null;
+      holder.lastQrAt = null;
       holder.error = String(msg || 'auth_failure');
+      holder.lastAuthFailure = { at: Date.now(), message: String(msg || 'auth_failure') };
+      holder.lastStatusAt = Date.now();
       console.log(`[WPP] Auth failure ${key}:`, msg);
     });
 
     client.on("disconnected", (reason) => {
       holder.status = "disconnected";
       holder.WA_READY = false;
+      holder.hasQr = false;
+      holder.lastQrRaw = null;
+      holder.lastQrAt = null;
+      holder.lastDisconnectReason = String(reason || 'disconnected');
+      holder.lastStatusAt = Date.now();
       console.log(`[WPP] Disconnected ${key}:`, reason);
     });
 
@@ -201,6 +220,9 @@ export function buildClientForKey(key) {
 
     client.on("error", (err) => {
       try { holder.WA_READY = false; } catch (_) {}
+      holder.status = "error";
+      holder.error = String(err?.message || err || 'error');
+      holder.lastStatusAt = Date.now();
       console.log(`[WPP] ERROR ${key}:`, err);
     });
 
@@ -212,12 +234,13 @@ export function buildClientForKey(key) {
       console.log('[WPP] initialize done', key);
       // Não forçar 'ready' automaticamente — manter 'qr' se houver,
       // ou marcar 'ready' somente se o evento 'ready' já definiu WA_READY.
+      // Importante: não sobrescrever estados reais (auth_failure, disconnected, error)
       if (holder.status === 'qr') {
         // manter 'qr'
       } else if (holder.WA_READY) {
         holder.status = 'ready';
       } else {
-        // manter status atual (provavelmente 'starting')
+        // manter status atual (não mascarar auth_failure/disconnected/error com 'starting')
       }
     } catch (err) {
       console.error('[WPP] initialize failed (continuing API up):', err?.message || err);
