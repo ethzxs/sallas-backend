@@ -808,7 +808,12 @@ app.post('/api/whatsapp/send', async (req, res) => {
   // Body: { messages: [{ to, body|text }] }
   app.post('/api/whatsapp/send-mass', async (req, res) => {
     try {
-      const { messages } = req.body || {};
+      const { messages, companyId, membershipId } = req.body || {};
+      console.log('[send-mass] received', {
+        companyId,
+        membershipId,
+        count: Array.isArray(messages) ? messages.length : 0
+      });
       if (!Array.isArray(messages)) return res.status(400).json({ ok: false, error: 'messages_required' });
 
       // find any ready holder
@@ -903,6 +908,7 @@ app.post('/api/whatsapp/send', async (req, res) => {
         }
       }
 
+      console.log('[send-mass] results', results);
       return res.json({ ok: true, results });
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e.message || e) });
