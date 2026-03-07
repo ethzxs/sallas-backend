@@ -154,6 +154,25 @@ async function hardRestartClient(key) {
   return await regenerateSessionForKey(key, { wipeAuth: false, rebuild: true });
 }
 
+const SEND_TIMEOUT_MS = Number(process.env.SEND_TIMEOUT_MS || 45000);
+
+function withTimeout(promise, ms = 20000, label = 'operation_timeout') {
+  let timer;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(label));
+    }, ms);
+  });
+
+  return Promise.race([
+    Promise.resolve(promise).finally(() => {
+      if (timer) clearTimeout(timer);
+    }),
+    timeoutPromise,
+  ]);
+}
+
 // Safe send helper: checa estado e trata 'detached Frame' reiniciando cliente quando necessário
 async function safeSendMessage(holder, chatId, message) {
   if (!holder || !holder.client) throw new Error('client_not_initialized');
