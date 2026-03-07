@@ -174,6 +174,15 @@ function withTimeout(promise, ms = 20000, label = 'operation_timeout') {
 }
 
 // Safe send helper: checa estado e trata 'detached Frame' reiniciando cliente quando necessário
+let sendQueue = Promise.resolve();
+
+function enqueueSend(task) {
+  const run = async () => await task();
+
+  const current = sendQueue.then(run, run);
+  sendQueue = current.catch(() => {});
+  return current;
+}
 async function safeSendMessage(holder, chatId, message) {
   if (!holder || !holder.client) throw new Error('client_not_initialized');
   if (!holder.WA_READY) return { ok: false, error: 'whatsapp_not_ready' };
