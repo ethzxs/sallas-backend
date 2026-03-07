@@ -134,7 +134,7 @@ export function buildClientForKey(key) {
         dataPath: AUTH_DIR,
       }),
       puppeteer: {
-        headless: "new",
+        headless: true,
         protocolTimeout: 900000,
         timeout: 900000,
         args: [
@@ -143,8 +143,6 @@ export function buildClientForKey(key) {
           "--disable-dev-shm-usage",
           "--disable-gpu",
           "--no-first-run",
-          "--no-zygote",
-          "--single-process",
           "--disable-features=site-per-process",
         ],
         executablePath: resolvedExecPath,
