@@ -6,6 +6,7 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import QRCode from "qrcode";
 import crypto from "crypto";
 import pkg from "whatsapp-web.js";
@@ -67,10 +68,12 @@ process.on("uncaughtException", (err) => {
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
+const require = createRequire(import.meta.url);
 app.use(cors());
 // permitir payloads maiores para batches com PDFs em base64
 // reduzir limite global de JSON para reduzir uso de memória no Render
 app.use(express.json({ limit: "2mb" }));
+app.use(require('./routes/extractQuotes.cjs'));
 
 const PORT = Number(process.env.PORT || 4010);
 
