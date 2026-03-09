@@ -3,6 +3,19 @@ const express = require('express');
 const router = express.Router();
 const { makeUserClient, serviceClient } = require('../utils/supabaseClients.cjs');
 
+function toErrorDetails(err) {
+  if (!err) return 'erro desconhecido';
+  if (typeof err === 'string') return err;
+
+  const parts = [err.message];
+  if (err.responseText) parts.push(err.responseText);
+  if (err.responseStatus) parts.push(`status=${err.responseStatus}`);
+  if (err.serverResponseCode) parts.push(`code=${err.serverResponseCode}`);
+  if (err.command) parts.push(`command=${err.command}`);
+
+  return parts.filter(Boolean).join(' | ');
+}
+
 router.get('/api/extract-quotes', (req, res) => {
   res.status(405).json({
     error: 'METHOD_NOT_ALLOWED',
@@ -121,18 +134,20 @@ router.post('/api/extract-quotes', async (req, res) => {
 
     return res.status(200).json({ jobId, quotesInserted: 0 });
   } catch (err) {
+    const details = toErrorDetails(err);
+
     try {
       await serviceClient
         .from('extraction_jobs')
         .update({
           status: 'error',
           finished_at: new Date().toISOString(),
-          error_message: err.message || String(err),
+          error_message: details,
         })
         .eq('id', jobId);
     } catch (_) {}
 
-    return res.status(500).json({ error: 'Extraction failed', details: err.message || String(err) });
+    return res.status(500).json({ error: 'Extraction failed', details });
   }
 });
 

@@ -1,11 +1,24 @@
 const { simpleParser } = require('mailparser');
 
 const { serviceClient } = require('../utils/supabaseClients.cjs');
-const { connectImap } = require('../email/imap/client.cjs');
+const { connectImap, decorateImapError } = require('../email/imap/client.cjs');
 const { resolveMailbox } = require('../email/imap/mailbox.cjs');
 const { decryptImapPassword } = require('../utils/imapCrypto.cjs');
 const { parseCotacaoCotefrete } = require('../email/parsers/cotefrete.cjs');
 const { parseCargas } = require('../email/parsers/cargas.cjs');
+
+function toLogMessage(err) {
+  if (!err) return 'erro desconhecido';
+  if (typeof err === 'string') return err;
+
+  const parts = [err.message];
+  if (err.responseText) parts.push(err.responseText);
+  if (err.responseStatus) parts.push(`status=${err.responseStatus}`);
+  if (err.serverResponseCode) parts.push(`code=${err.serverResponseCode}`);
+  if (err.command) parts.push(`command=${err.command}`);
+
+  return parts.filter(Boolean).join(' | ');
+}
 
 async function runExtractionJob(jobId, companyId) {
   const { data: connection, error } = await serviceClient
@@ -63,7 +76,14 @@ async function runExtractionJob(jobId, companyId) {
   try {
     client = await connectImap(imapConfig);
     const mailboxName = await resolveMailbox(client, connection.mailbox || 'Novas');
-    const messages = await client.search({ seen: false });
+    let messages;
+
+    try {
+      messages = await client.search({ seen: false });
+    } catch (err) {
+      throw decorateImapError(err, `Falha ao buscar mensagens nao lidas na mailbox ${mailboxName}`);
+    }
+
     const userId = await getJobUserId(jobId);
 
     const maxMessages = 20;
@@ -72,7 +92,14 @@ async function runExtractionJob(jobId, companyId) {
       : [];
 
     for (const uid of uids) {
-      const full = await client.fetchOne(uid, { envelope: true, source: true });
+      let full;
+
+      try {
+        full = await client.fetchOne(uid, { envelope: true, source: true });
+      } catch (err) {
+        throw decorateImapError(err, `Falha ao ler mensagem uid=${uid} mailbox=${mailboxName}`);
+      }
+
       if (!full?.envelope) continue;
 
       const fromAddr = full.envelope.from?.[0]?.address || '';
@@ -101,7 +128,14 @@ async function runExtractionJob(jobId, companyId) {
 
       const date = full.envelope.date || null;
       const rawEml = full.source ? full.source.toString('utf8') : '';
-      const parsed = await simpleParser(rawEml);
+      let parsed;
+
+      try {
+        parsed = await simpleParser(rawEml);
+      } catch (err) {
+        throw new Error(`Falha ao parsear email uid=${uid} mailbox=${mailboxName}: ${toLogMessage(err)}`);
+      }
+
       const html = parsed.html || '';
       const text = parsed.text || '';
 

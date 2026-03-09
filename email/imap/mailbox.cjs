@@ -1,3 +1,5 @@
+const { decorateImapError } = require('./client.cjs');
+
 async function resolveMailbox(client, preferred) {
   const attempts = [];
 
@@ -17,7 +19,7 @@ async function resolveMailbox(client, preferred) {
       await client.mailboxOpen(name);
       return name;
     } catch (err) {
-      lastError = err;
+      lastError = decorateImapError(err, `Falha ao abrir mailbox ${name}`);
     }
   }
 
