@@ -74,6 +74,7 @@ app.use(cors());
 // reduzir limite global de JSON para reduzir uso de memória no Render
 app.use(express.json({ limit: "2mb" }));
 app.use(require('./routes/extractQuotes.cjs'));
+app.use('/api', require('./routes/emailConnections.cjs'));
 
 const PORT = Number(process.env.PORT || 4010);
 
