@@ -230,36 +230,6 @@ async function runExtractionJob(jobId, companyId) {
       }
 
       stats.candidates += 1;
-      if (isGuia) {
-        const result = await processGuia({
-          uid,
-          client,
-          companyId,
-          userId,
-          sourceMessageId,
-          subjectTxt,
-          fromAddr,
-          date,
-          text,
-          html,
-          debug: pushDebug,
-        });
-        if (result?.inserted) stats.inserted += 1;
-        if (result?.error) stats.errors += 1;
-        try {
-          pushDebug('guia result', {
-            jobId,
-            companyId,
-            uid,
-            sourceMessageId,
-            inserted: !!result?.inserted,
-            error: !!result?.error,
-          });
-        } catch (_) {}
-        continue;
-      }
-
-
       const messageId = full.envelope.messageId || null;
       const sourceMessageId = messageId || `uid:${uid}:${mailboxName}`;
 
@@ -308,6 +278,35 @@ async function runExtractionJob(jobId, companyId) {
           htmlPreview: summarizeText(html, 180),
         });
       } catch (_) {}
+
+      if (isGuia) {
+        const result = await processGuia({
+          uid,
+          client,
+          companyId,
+          userId,
+          sourceMessageId,
+          subjectTxt,
+          fromAddr,
+          date,
+          text,
+          html,
+          debug: pushDebug,
+        });
+        if (result?.inserted) stats.inserted += 1;
+        if (result?.error) stats.errors += 1;
+        try {
+          pushDebug('guia result', {
+            jobId,
+            companyId,
+            uid,
+            sourceMessageId,
+            inserted: !!result?.inserted,
+            error: !!result?.error,
+          });
+        } catch (_) {}
+        continue;
+      }
 
       if (isCotefrete) {
         const result = await processCotefrete({
