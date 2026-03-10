@@ -177,6 +177,16 @@ function withTimeout(promise, ms = 20000, label = 'operation_timeout') {
   ]);
 }
 
+function getHolderQrDataUrl(holder) {
+  if (!holder) return null;
+  return holder.lastQrDataUrl || null;
+}
+
+function holderHasQr(holder) {
+  if (!holder) return false;
+  return Boolean(holder.lastQrDataUrl || holder.lastQrRaw);
+}
+
 // Safe send helper: checa estado e trata 'detached Frame' reiniciando cliente quando necessário
 let sendQueue = Promise.resolve();
 
@@ -479,7 +489,7 @@ app.get("/wpp/status", async (req, res) => {
       const active = Array.from(clients.entries()).map(([key, holder]) => ({
         key,
         status: holder?.status ?? "unknown",
-        hasQr: Boolean(holder?.lastQrRaw),
+        hasQr: holderHasQr(holder),
       }));
 
       return res.json({ ok: true, status: "missing_params", active });
@@ -497,7 +507,7 @@ app.get("/wpp/status", async (req, res) => {
     return res.json({
       ok: holder.status === 'error' ? false : true,
       status: holder.status || 'starting',
-      hasQr: Boolean(holder.lastQrRaw),
+      hasQr: holderHasQr(holder),
       error: holder.error || null,
       waReady: Boolean(holder.WA_READY),
       lastStatusAt: holder.lastStatusAt || null,
@@ -531,6 +541,11 @@ app.get("/wpp/qr", async (req, res) => {
       return res.json({ ok: true, status: "starting", hasQr: false, qrDataUrl: null });
     }
 
+    const cachedQrDataUrl = getHolderQrDataUrl(holder);
+    if (cachedQrDataUrl) {
+      return res.json({ ok: true, status: 'qr', hasQr: true, qrDataUrl: cachedQrDataUrl });
+    }
+
     if (holder.lastQrRaw) {
       try {
         const qrDataUrl = await QRCode.toDataURL(holder.lastQrRaw, { errorCorrectionLevel: "M", margin: 1, scale: 6 });
@@ -554,7 +569,7 @@ app.get("/wpp/qr", async (req, res) => {
 
     if (
       holder.status === 'starting' &&
-      !holder.lastQrRaw &&
+      !holderHasQr(holder) &&
       !holder.WA_READY &&
       holder.initializingAt &&
       (Date.now() - holder.initializingAt > 90000)
