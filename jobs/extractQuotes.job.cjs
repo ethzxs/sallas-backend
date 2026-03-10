@@ -38,6 +38,20 @@ async function runExtractionJob(jobId, companyId) {
     ignored: 0,
     errors: 0,
   };
+  const debugEvents = [];
+
+  function pushDebug(event, details) {
+    const entry = {
+      ts: new Date().toISOString(),
+      event,
+      ...(details || {}),
+    };
+    debugEvents.push(entry);
+    if (debugEvents.length > 200) debugEvents.shift();
+    try {
+      console.log('[extract-debug]', entry);
+    } catch (_) {}
+  }
 
   const { data: connection, error } = await serviceClient
     .from('email_connections')
@@ -52,7 +66,7 @@ async function runExtractionJob(jobId, companyId) {
   }
 
   try {
-    console.log('[extract-debug] connection loaded', {
+    pushDebug('connection loaded', {
       jobId,
       companyId,
       connectionId: connection.id,
@@ -110,7 +124,7 @@ async function runExtractionJob(jobId, companyId) {
   try {
     client = await connectImap(imapConfig);
     try {
-      console.log('[extract-debug] imap connected', {
+      pushDebug('imap connected', {
         jobId,
         companyId,
         host: imapConfig.host,
@@ -122,7 +136,7 @@ async function runExtractionJob(jobId, companyId) {
     const mailboxName = await resolveMailbox(client, connection.mailbox || 'Novas');
     stats.mailbox = mailboxName;
     try {
-      console.log('[extract-debug] mailbox resolved', {
+      pushDebug('mailbox resolved', {
         jobId,
         companyId,
         mailboxResolved: mailboxName,
@@ -138,7 +152,7 @@ async function runExtractionJob(jobId, companyId) {
     }
 
     try {
-      console.log('[extract-debug] unread search result', {
+      pushDebug('unread search result', {
         jobId,
         companyId,
         mailbox: mailboxName,
@@ -167,9 +181,7 @@ async function runExtractionJob(jobId, companyId) {
 
       if (!full?.envelope) {
         stats.ignored += 1;
-        try {
-          console.log('[extract-debug] skipped message without envelope', { jobId, companyId, uid, mailbox: mailboxName });
-        } catch (_) {}
+        try { pushDebug('skipped message without envelope', { jobId, companyId, uid, mailbox: mailboxName }); } catch (_) {}
         continue;
       }
 
@@ -180,9 +192,7 @@ async function runExtractionJob(jobId, companyId) {
 
       if (fromLower.includes('mailer-daemon')) {
         stats.ignored += 1;
-        try {
-          console.log('[extract-debug] skipped mailer-daemon', { jobId, companyId, uid, from: fromAddr, subject: subjectTxt });
-        } catch (_) {}
+        try { pushDebug('skipped mailer-daemon', { jobId, companyId, uid, from: fromAddr, subject: subjectTxt }); } catch (_) {}
         continue;
       }
 
@@ -190,7 +200,7 @@ async function runExtractionJob(jobId, companyId) {
       const isCargas = fromLower.includes('cargas.com.br') || subjLower.includes('nova cotação') || subjLower.includes('nova cotacao');
 
       try {
-        console.log('[extract-debug] message classification', {
+        pushDebug('message classification', {
           jobId,
           companyId,
           uid,
@@ -205,7 +215,7 @@ async function runExtractionJob(jobId, companyId) {
       if (!isCotefrete && !isCargas) {
         stats.ignored += 1;
         try {
-          console.log('[extract-debug] ignored message by filter', {
+          pushDebug('ignored message by filter', {
             jobId,
             companyId,
             uid,
@@ -232,7 +242,7 @@ async function runExtractionJob(jobId, companyId) {
       if (existing?.id) {
         stats.duplicates += 1;
         try {
-          console.log('[extract-debug] skipped duplicate message', {
+          pushDebug('skipped duplicate message', {
             jobId,
             companyId,
             uid,
@@ -257,7 +267,7 @@ async function runExtractionJob(jobId, companyId) {
       const text = parsed.text || '';
 
       try {
-        console.log('[extract-debug] parsed raw email', {
+        pushDebug('parsed raw email', {
           jobId,
           companyId,
           uid,
@@ -279,11 +289,12 @@ async function runExtractionJob(jobId, companyId) {
           date,
           text,
           html,
+          debug: pushDebug,
         });
         if (result?.inserted) stats.inserted += 1;
         if (result?.error) stats.errors += 1;
         try {
-          console.log('[extract-debug] cotefrete result', {
+          pushDebug('cotefrete result', {
             jobId,
             companyId,
             uid,
@@ -307,11 +318,12 @@ async function runExtractionJob(jobId, companyId) {
           date,
           text,
           html,
+          debug: pushDebug,
         });
         if (result?.inserted) stats.inserted += 1;
         if (result?.error) stats.errors += 1;
         try {
-          console.log('[extract-debug] cargas result', {
+          pushDebug('cargas result', {
             jobId,
             companyId,
             uid,
@@ -328,11 +340,9 @@ async function runExtractionJob(jobId, companyId) {
     } catch (_) {}
   }
 
-  try {
-    console.log('[extract-debug] extraction summary', { jobId, companyId, ...stats });
-  } catch (_) {}
+  try { pushDebug('extraction summary', { jobId, companyId, ...stats }); } catch (_) {}
 
-  return { success: true, ...stats };
+  return { success: true, ...stats, debug: debugEvents };
 }
 
 async function getJobUserId(jobId) {
@@ -346,13 +356,13 @@ async function getJobUserId(jobId) {
 }
 
 async function processCotefrete(context) {
-  const { uid, client, companyId, userId, sourceMessageId, subjectTxt, fromAddr, date, text, html } = context;
+  const { uid, client, companyId, userId, sourceMessageId, subjectTxt, fromAddr, date, text, html, debug } = context;
   let quote = null;
 
   try {
     const data = parseCotacaoCotefrete(text, html);
     try {
-      console.log('[extract-debug] cotefrete parsed fields', {
+      debug && debug('cotefrete parsed fields', {
         companyId,
         uid,
         sourceMessageId,
@@ -412,7 +422,7 @@ async function processCotefrete(context) {
     if (itemError) throw itemError;
   } catch (err) {
     try {
-      console.error('[extract-debug] cotefrete processing error', {
+      debug && debug('cotefrete processing error', {
         companyId,
         uid,
         sourceMessageId,
@@ -449,7 +459,7 @@ async function processCotefrete(context) {
 }
 
 async function processCargas(context) {
-  const { uid, client, companyId, userId, sourceMessageId, subjectTxt, fromAddr, date, text, html } = context;
+  const { uid, client, companyId, userId, sourceMessageId, subjectTxt, fromAddr, date, text, html, debug } = context;
   let quoteId = null;
 
   try {
@@ -476,7 +486,7 @@ async function processCargas(context) {
 
     const data = parseCargas(text);
     try {
-      console.log('[extract-debug] cargas parsed fields', {
+      debug && debug('cargas parsed fields', {
         companyId,
         uid,
         sourceMessageId,
@@ -511,7 +521,7 @@ async function processCargas(context) {
     return { inserted: true, error: false };
   } catch (err) {
     try {
-      console.error('[extract-debug] cargas processing error', {
+      debug && debug('cargas processing error', {
         companyId,
         uid,
         sourceMessageId,
