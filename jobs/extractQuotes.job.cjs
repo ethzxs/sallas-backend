@@ -6,6 +6,7 @@ const { resolveMailbox } = require('../email/imap/mailbox.cjs');
 const { decryptImapPassword } = require('../utils/imapCrypto.cjs');
 const { parseCotacaoCotefrete } = require('../email/parsers/cotefrete.cjs');
 const { parseCargas } = require('../email/parsers/cargas.cjs');
+const { parseGuia } = require('../email/parsers/guia.cjs');
 
 function toLogMessage(err) {
   if (!err) return 'erro desconhecido';
@@ -196,8 +197,9 @@ async function runExtractionJob(jobId, companyId) {
         continue;
       }
 
-      const isCotefrete = fromLower.includes('cotefrete') || subjLower.startsWith('cotação:') || subjLower.startsWith('cotacao:');
-      const isCargas = fromLower.includes('cargas.com.br') || subjLower.includes('nova cotação') || subjLower.includes('nova cotacao');
+      const isGuia = fromLower.includes('guiadotransporte.com.br') || fromLower.includes('cotacao@guiadotransporte.com.br');
+      const isCotefrete = !isGuia && (fromLower.includes('cotefrete') || subjLower.startsWith('cotação:') || subjLower.startsWith('cotacao:'));
+      const isCargas = !isGuia && (fromLower.includes('cargas.com.br') || subjLower.includes('nova cotação') || subjLower.includes('nova cotacao'));
 
       try {
         pushDebug('message classification', {
@@ -207,12 +209,13 @@ async function runExtractionJob(jobId, companyId) {
           mailbox: mailboxName,
           from: fromAddr,
           subject: subjectTxt,
+          isGuia,
           isCotefrete,
           isCargas,
         });
       } catch (_) {}
 
-      if (!isCotefrete && !isCargas) {
+      if (!isGuia && !isCotefrete && !isCargas) {
         stats.ignored += 1;
         try {
           pushDebug('ignored message by filter', {
@@ -227,6 +230,35 @@ async function runExtractionJob(jobId, companyId) {
       }
 
       stats.candidates += 1;
+      if (isGuia) {
+        const result = await processGuia({
+          uid,
+          client,
+          companyId,
+          userId,
+          sourceMessageId,
+          subjectTxt,
+          fromAddr,
+          date,
+          text,
+          html,
+          debug: pushDebug,
+        });
+        if (result?.inserted) stats.inserted += 1;
+        if (result?.error) stats.errors += 1;
+        try {
+          pushDebug('guia result', {
+            jobId,
+            companyId,
+            uid,
+            sourceMessageId,
+            inserted: !!result?.inserted,
+            error: !!result?.error,
+          });
+        } catch (_) {}
+        continue;
+      }
+
 
       const messageId = full.envelope.messageId || null;
       const sourceMessageId = messageId || `uid:${uid}:${mailboxName}`;
@@ -459,6 +491,14 @@ async function processCotefrete(context) {
 }
 
 async function processCargas(context) {
+  return processMarketplaceQuote(context, parseCargas, 'cargas');
+}
+
+async function processGuia(context) {
+  return processMarketplaceQuote(context, parseGuia, 'guia');
+}
+
+async function processMarketplaceQuote(context, parser, parserName) {
   const { uid, client, companyId, userId, sourceMessageId, subjectTxt, fromAddr, date, text, html, debug } = context;
   let quoteId = null;
 
@@ -484,15 +524,17 @@ async function processCargas(context) {
     if (quoteError) throw quoteError;
     quoteId = quoteData.id;
 
-    const data = parseCargas(text, html);
+    const data = parser(text, html);
     try {
-      debug && debug('cargas parsed fields', {
+      debug && debug(`${parserName} parsed fields`, {
         companyId,
         uid,
         sourceMessageId,
         parsed: data,
       });
     } catch (_) {}
+
+    const cargoDesc = data.cargo_desc || data.observacoes || data.descricaoItem || null;
 
     const { error: itemError } = await serviceClient.from('quote_items').insert({
       quote_id: quoteId,
@@ -501,9 +543,11 @@ async function processCargas(context) {
       origin_state: data.origemUF,
       dest_city: data.destinoCidade,
       dest_state: data.destinoUF,
-      cargo_desc: data.observacoes,
+      weight_kg: data.peso ?? null,
+      volume_m3: data.cubagem ?? null,
+      cargo_desc: cargoDesc,
       notes: null,
-      packages: data.packages,
+      packages: data.packages ?? data.quantidade ?? null,
     });
 
     if (itemError) throw itemError;
@@ -514,6 +558,7 @@ async function processCargas(context) {
         contact_name: data.contact_name,
         contact_email: data.contact_email,
         contact_whatsapp: data.contact_whatsapp,
+        invoice_value: data.valorNota ?? null,
         status: 'parsed',
       })
       .eq('id', quoteId);
@@ -521,7 +566,7 @@ async function processCargas(context) {
     return { inserted: true, error: false };
   } catch (err) {
     try {
-      debug && debug('cargas processing error', {
+      debug && debug(`${parserName} processing error`, {
         companyId,
         uid,
         sourceMessageId,
