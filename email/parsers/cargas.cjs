@@ -63,7 +63,9 @@ function extractEmail(text) {
 function isPlatformEmail(email) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) return false;
-  return normalized.endsWith('@guiadotransporte.com.br') || normalized.endsWith('@cotefrete.com.br');
+  return normalized.endsWith('@guiadotransporte.com.br')
+    || normalized.endsWith('@cotefrete.com.br')
+    || normalized.endsWith('@cargas.com.br');
 }
 
 function extractPhone(text) {
@@ -74,6 +76,64 @@ function extractPhone(text) {
     source.match(/\b\d{2}\s*9?\s*\d{4,5}[-\s]?\d{4}\b/);
 
   return match ? match[0].replace(/\s+/g, ' ').replace(' -', '-').trim() : null;
+}
+
+function collectContactLines(lines, startIndex, maxLines = 12) {
+  if (startIndex < 0) return [];
+
+  const collected = [];
+  const headerRemainder = String(lines[startIndex] || '')
+    .replace(/^dados\s+de\s+contato\s*:\s*/i, '')
+    .trim();
+
+  if (headerRemainder) collected.push(headerRemainder);
+
+  for (let index = startIndex + 1; index < Math.min(startIndex + maxLines, lines.length); index += 1) {
+    const line = String(lines[index] || '').trim();
+    if (!line) continue;
+    if (/^atenciosamente\b/i.test(line)) break;
+    if (/abrir\s+cota(c|ç)ao/i.test(line)) break;
+    if (/^(origem|destino|quantidade|peso|cubagem|valor\s+da\s+nota|observa(c|ç)(oes|ções)|informa(c|ç)(oes|ções)\s+adicionais)\s*:/i.test(line)) break;
+    collected.push(line);
+  }
+
+  return collected;
+}
+
+function isLikelyContactName(line) {
+  const value = String(line || '').trim();
+  if (!value) return false;
+  if (extractEmail(value) || extractPhone(value)) return false;
+  if (/^(dados\s+de\s+contato|atenciosamente|e-?mail|email|telefone|tel\.?|whats(?:app)?|celular|fone)\b/i.test(value)) return false;
+  if (/^https?:\/\//i.test(value)) return false;
+  return true;
+}
+
+function extractContactEmail(lines) {
+  for (const line of lines) {
+    const labeledMatch = String(line || '').match(/^(?:e-?mail|email)\s*:\s*(.+)$/i);
+    if (!labeledMatch) continue;
+    const email = extractEmail(labeledMatch[1]);
+    if (email && !isPlatformEmail(email)) return cleanEmail(email);
+  }
+
+  for (const line of lines) {
+    const email = extractEmail(line);
+    if (email && !isPlatformEmail(email)) return cleanEmail(email);
+  }
+
+  return null;
+}
+
+function extractContactWhatsapp(lines) {
+  for (const line of lines) {
+    const labeledMatch = String(line || '').match(/^(?:telefone|tel\.?|whats(?:app)?|telefone\s*\/\s*whats(?:app)?|whats(?:app)?\s*\/\s*telefone|celular|fone)\s*:\s*(.+)$/i);
+    if (!labeledMatch) continue;
+    const phone = extractPhone(labeledMatch[1]);
+    if (phone) return phone;
+  }
+
+  return null;
 }
 
 function sectionAfter(lines, headerRegex) {
@@ -140,30 +200,36 @@ function parseCargas(text, html) {
 
   const dataContactIndex = lines.findIndex((line) => /^dados\s+de\s+contato\s*:/i.test(line));
   if (dataContactIndex >= 0) {
-    for (let index = dataContactIndex; index < Math.min(dataContactIndex + 12, lines.length); index += 1) {
-      const line = lines[index];
-      const nameMatch = line.match(/^nome:\s*(.+)$/i);
-      if (nameMatch) contact_name = nameMatch[1].trim();
+    const contactLines = collectContactLines(lines, dataContactIndex);
 
-      const phoneMatch = line.match(/^telefone:\s*(.+)$/i);
-      if (phoneMatch) contact_whatsapp = extractPhone(phoneMatch[1]) || phoneMatch[1].trim();
-
-      const foundEmail = extractEmail(line);
-      if (!contact_email && foundEmail && !isPlatformEmail(foundEmail)) contact_email = foundEmail;
-      contact_whatsapp = contact_whatsapp || extractPhone(line);
+    for (const line of contactLines) {
+      const nameMatch = String(line || '').match(/^nome:\s*(.+)$/i);
+      if (nameMatch) {
+        contact_name = nameMatch[1].trim();
+        break;
+      }
     }
+
+    if (!contact_name) {
+      const fallbackName = contactLines.find((line) => isLikelyContactName(line));
+      if (fallbackName) contact_name = fallbackName.trim();
+    }
+
+    contact_email = extractContactEmail(contactLines);
+    contact_whatsapp = extractContactWhatsapp(contactLines);
   } else {
     const regardsIndex = lines.findIndex((line) => /^atenciosamente\b/i.test(line));
     if (regardsIndex >= 0) {
-      contact_name = lines[regardsIndex + 1] ? lines[regardsIndex + 1].trim() : null;
-      const tail = lines.slice(regardsIndex, regardsIndex + 12).join(' \n ');
-      const tailEmail = extractEmail(tail);
-      contact_email = tailEmail && !isPlatformEmail(tailEmail) ? tailEmail : null;
-      contact_whatsapp = extractPhone(tail);
+      const tailLines = lines.slice(regardsIndex, regardsIndex + 12);
+      const nextLine = lines[regardsIndex + 1] ? lines[regardsIndex + 1].trim() : null;
+
+      if (isLikelyContactName(nextLine)) contact_name = nextLine;
+
+      contact_email = extractContactEmail(tailLines);
+      contact_whatsapp = extractContactWhatsapp(tailLines);
     } else {
-      const fallbackEmail = extractEmail(sourceJoined || source);
-      contact_email = fallbackEmail && !isPlatformEmail(fallbackEmail) ? fallbackEmail : null;
-      contact_whatsapp = extractPhone(sourceJoined || source);
+      contact_email = extractContactEmail(lines);
+      contact_whatsapp = extractContactWhatsapp(lines);
     }
   }
 

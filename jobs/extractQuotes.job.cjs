@@ -523,7 +523,13 @@ async function processMarketplaceQuote(context, parser, parserName) {
     if (quoteError) throw quoteError;
     quoteId = quoteData.id;
 
-    const data = parser(text, html);
+    const data = await parser(text, html, {
+      debug,
+      companyId,
+      uid,
+      sourceMessageId,
+      parserName,
+    });
     try {
       debug && debug(`${parserName} parsed fields`, {
         companyId,

@@ -1,3 +1,5 @@
+const { extractGuideWhatsappUrl, resolveWhatsappFromGuideUrl } = require('./whatsappResolver.cjs');
+
 function parseNumeroBR(value) {
   if (value == null) return null;
   const normalized = String(value).trim().replace(/\./g, '').replace(',', '.');
@@ -50,8 +52,12 @@ function normalizeDescription(value) {
     .trim();
 }
 
-function parseGuia(text, html) {
-  const source = normalizeGuideText([text, htmlToLooseText(html)].filter(Boolean).join(' '));
+async function parseGuia(text, html, options = {}) {
+  const debug = typeof options.debug === 'function' ? options.debug : null;
+  const rawText = String(text || '');
+  const rawHtml = String(html || '');
+  const looseHtml = htmlToLooseText(rawHtml);
+  const source = normalizeGuideText([rawText, looseHtml].filter(Boolean).join(' '));
   const result = {
     origemCidade: null,
     origemUF: null,
@@ -98,8 +104,13 @@ function parseGuia(text, html) {
   const cubagemMatch = source.match(/Cubagem:\s*([0-9\.,]+)\s*M(?:3|³)?\b/i) || source.match(/Cubagem:\s*([0-9\.,]+)\s*M\b/i);
   if (cubagemMatch) result.cubagem = parseNumeroBR(cubagemMatch[1]);
 
-  const whatsappUrlMatch = source.match(/https?:\/\/guiadotransporte\.com\.br\/wa\/[A-Za-z0-9]+/i);
-  if (whatsappUrlMatch) result.contact_whatsapp_url = whatsappUrlMatch[0].trim();
+  result.contact_whatsapp_url = extractGuideWhatsappUrl(rawHtml, rawText, source);
+  if (result.contact_whatsapp_url) {
+    debug && debug('guia whatsapp url found', {
+      url: result.contact_whatsapp_url,
+      sourceMessageId: options.sourceMessageId || null,
+    });
+  }
 
   const nameMatch = source.match(/Atenciosamente,\s*(.+?)(?=\s*<?https?:\/\/guiadotransporte\.com\.br\/wa\/|\s+Abrir\s+esta\s+cotacao\s+no\s+WhatsApp|\s+E-mail\s+enviado\s+pelo\s+Guia\s+do\s+Transporte|$)/i);
   if (nameMatch) result.contact_name = cleanName(nameMatch[1]);
@@ -125,6 +136,33 @@ function parseGuia(text, html) {
       result.descricaoItem = normalizedDescription;
       result.observacoes = normalizedDescription;
       result.cargo_desc = normalizedDescription;
+    }
+  }
+
+  if (!result.contact_whatsapp && result.contact_whatsapp_url) {
+    const resolution = await resolveWhatsappFromGuideUrl(result.contact_whatsapp_url, {
+      debug,
+      fetchImpl: options.fetchImpl,
+      maxHops: options.maxHops,
+      timeoutMs: options.timeoutMs || 8000,
+    });
+
+    if (resolution.phone) {
+      result.contact_whatsapp = resolution.phone;
+      debug && debug('guia whatsapp resolved', {
+        sourceMessageId: options.sourceMessageId || null,
+        url: result.contact_whatsapp_url,
+        finalUrl: resolution.finalUrl,
+        phone: resolution.phone,
+        resolutionSource: resolution.source,
+      });
+    } else {
+      debug && debug('guia whatsapp unresolved', {
+        sourceMessageId: options.sourceMessageId || null,
+        url: result.contact_whatsapp_url,
+        finalUrl: resolution.finalUrl,
+        error: resolution.error,
+      });
     }
   }
 
