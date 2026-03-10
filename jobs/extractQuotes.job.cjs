@@ -254,7 +254,11 @@ async function runExtractionJob(jobId, companyId) {
       }
 
       const date = full.envelope.date || null;
+<<<<<<< HEAD
       const rawEml = full.source || '';
+=======
+      const rawEml = full.source ? full.source.toString('utf8') : '';
+>>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
       let parsed;
 
       try {
@@ -484,7 +488,11 @@ async function processCargas(context) {
     if (quoteError) throw quoteError;
     quoteId = quoteData.id;
 
+<<<<<<< HEAD
     const data = parseCargas(text, html);
+=======
+    const data = parseCargas(text);
+>>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
     try {
       debug && debug('cargas parsed fields', {
         companyId,

@@ -32,6 +32,7 @@ router.post('/api/extract-quotes', async (req, res) => {
   const token = authHeader.split(' ')[1];
   const { companyId } = req.body || {};
 
+<<<<<<< HEAD
   try {
     console.log('[extract-debug] request received', {
       companyId: companyId || null,
@@ -39,6 +40,8 @@ router.post('/api/extract-quotes', async (req, res) => {
     });
   } catch (_) {}
 
+=======
+>>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
   if (!companyId) {
     return res.status(400).json({ error: 'companyId is required in body' });
   }
@@ -57,10 +60,13 @@ router.post('/api/extract-quotes', async (req, res) => {
 
   const userId = authData.user.id;
 
+<<<<<<< HEAD
   try {
     console.log('[extract-debug] authenticated user', { companyId, userId });
   } catch (_) {}
 
+=======
+>>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
   const { data: memberships, error: memErr } = await userClient
     .from('memberships')
     .select('id,role,is_active')
@@ -76,6 +82,7 @@ router.post('/api/extract-quotes', async (req, res) => {
   }
 
   const role = memberships[0].role;
+<<<<<<< HEAD
   try {
     console.log('[extract-debug] membership validated', {
       companyId,
@@ -84,6 +91,8 @@ router.post('/api/extract-quotes', async (req, res) => {
       membershipCount: memberships.length,
     });
   } catch (_) {}
+=======
+>>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
   if (!(role === 'admin' || role === 'comercial')) {
     return res.status(403).json({ error: 'Not authorized (insufficient role)' });
   }
@@ -105,6 +114,7 @@ router.post('/api/extract-quotes', async (req, res) => {
   const jobId = jobData.id;
 
   try {
+<<<<<<< HEAD
     console.log('[extract-debug] job created', { companyId, userId, jobId });
   } catch (_) {}
 
@@ -141,6 +151,11 @@ router.post('/api/extract-quotes', async (req, res) => {
       console.log('[extract-debug] job result', { companyId, jobId, result });
     } catch (_) {}
 
+=======
+    const { runExtractionJob } = require('../jobs/extractQuotes.job.cjs');
+    const result = await runExtractionJob(jobId, companyId);
+
+>>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
     if (result?.success === false && result.reason === 'invalid_encryption_key') {
       await serviceClient
         .from('extraction_jobs')
@@ -179,6 +194,7 @@ router.post('/api/extract-quotes', async (req, res) => {
       .update({
         status: 'done',
         finished_at: new Date().toISOString(),
+<<<<<<< HEAD
         quotes_found: Number(result?.candidates || 0),
         quotes_inserted: Number(result?.inserted || 0),
       })
@@ -195,14 +211,25 @@ router.post('/api/extract-quotes', async (req, res) => {
       totalMessages: Number(result?.totalMessages || 0),
       debug: Array.isArray(result?.debug) ? result.debug : [],
     });
+=======
+        quotes_found: 0,
+        quotes_inserted: 0,
+      })
+      .eq('id', jobId);
+
+    return res.status(200).json({ jobId, quotesInserted: 0 });
+>>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
   } catch (err) {
     const details = toErrorDetails(err);
 
     try {
+<<<<<<< HEAD
       console.error('[extract-debug] route failure', { companyId, jobId, details });
     } catch (_) {}
 
     try {
+=======
+>>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
       await serviceClient
         .from('extraction_jobs')
         .update({
