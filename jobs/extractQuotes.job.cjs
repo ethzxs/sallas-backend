@@ -20,7 +20,25 @@ function toLogMessage(err) {
   return parts.filter(Boolean).join(' | ');
 }
 
+function summarizeText(value, maxLength) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  const limit = Number(maxLength) || 120;
+  return text.length > limit ? text.slice(0, limit) + '...' : text;
+}
+
 async function runExtractionJob(jobId, companyId) {
+  const stats = {
+    mailbox: null,
+    totalMessages: 0,
+    scanned: 0,
+    candidates: 0,
+    inserted: 0,
+    duplicates: 0,
+    ignored: 0,
+    errors: 0,
+  };
+
   const { data: connection, error } = await serviceClient
     .from('email_connections')
     .select('*')
@@ -32,6 +50,22 @@ async function runExtractionJob(jobId, companyId) {
   if (error || !connection) {
     throw new Error('No active email connection found for company ' + companyId);
   }
+
+  try {
+    console.log('[extract-debug] connection loaded', {
+      jobId,
+      companyId,
+      connectionId: connection.id,
+      provider: connection.provider,
+      host: connection.host,
+      port: connection.port,
+      username: connection.username,
+      mailboxConfigured: connection.mailbox || null,
+      isActive: connection.is_active,
+      isVerified: connection.is_verified,
+      hasPassword: connection.password_encrypted != null,
+    });
+  } catch (_) {}
 
   if (connection.password_encrypted == null) {
     return {
@@ -75,7 +109,26 @@ async function runExtractionJob(jobId, companyId) {
   let client;
   try {
     client = await connectImap(imapConfig);
+    try {
+      console.log('[extract-debug] imap connected', {
+        jobId,
+        companyId,
+        host: imapConfig.host,
+        port: imapConfig.port,
+        username: imapConfig.username,
+        mailboxRequested: imapConfig.mailbox || null,
+      });
+    } catch (_) {}
     const mailboxName = await resolveMailbox(client, connection.mailbox || 'Novas');
+    stats.mailbox = mailboxName;
+    try {
+      console.log('[extract-debug] mailbox resolved', {
+        jobId,
+        companyId,
+        mailboxResolved: mailboxName,
+        mailboxConfigured: connection.mailbox || null,
+      });
+    } catch (_) {}
     let messages;
 
     try {
@@ -84,12 +137,24 @@ async function runExtractionJob(jobId, companyId) {
       throw decorateImapError(err, `Falha ao buscar mensagens nao lidas na mailbox ${mailboxName}`);
     }
 
+    try {
+      console.log('[extract-debug] unread search result', {
+        jobId,
+        companyId,
+        mailbox: mailboxName,
+        unreadCount: Array.isArray(messages) ? messages.length : 0,
+        unreadUids: Array.isArray(messages) ? messages.slice(0, 20) : [],
+      });
+    } catch (_) {}
+
     const userId = await getJobUserId(jobId);
 
-    const maxMessages = 20;
+    const maxMessages = 50;
     const uids = Array.isArray(messages)
       ? [...messages].sort((left, right) => right - left).slice(0, maxMessages)
       : [];
+    stats.totalMessages = Array.isArray(messages) ? messages.length : 0;
+    stats.scanned = uids.length;
 
     for (const uid of uids) {
       let full;
@@ -100,18 +165,58 @@ async function runExtractionJob(jobId, companyId) {
         throw decorateImapError(err, `Falha ao ler mensagem uid=${uid} mailbox=${mailboxName}`);
       }
 
-      if (!full?.envelope) continue;
+      if (!full?.envelope) {
+        stats.ignored += 1;
+        try {
+          console.log('[extract-debug] skipped message without envelope', { jobId, companyId, uid, mailbox: mailboxName });
+        } catch (_) {}
+        continue;
+      }
 
       const fromAddr = full.envelope.from?.[0]?.address || '';
       const subjectTxt = full.envelope.subject || '';
       const fromLower = fromAddr.toLowerCase();
       const subjLower = subjectTxt.toLowerCase();
 
-      if (fromLower.includes('mailer-daemon')) continue;
+      if (fromLower.includes('mailer-daemon')) {
+        stats.ignored += 1;
+        try {
+          console.log('[extract-debug] skipped mailer-daemon', { jobId, companyId, uid, from: fromAddr, subject: subjectTxt });
+        } catch (_) {}
+        continue;
+      }
 
       const isCotefrete = fromLower.includes('cotefrete') || subjLower.startsWith('cotação:') || subjLower.startsWith('cotacao:');
       const isCargas = fromLower.includes('cargas.com.br') || subjLower.includes('nova cotação') || subjLower.includes('nova cotacao');
-      if (!isCotefrete && !isCargas) continue;
+
+      try {
+        console.log('[extract-debug] message classification', {
+          jobId,
+          companyId,
+          uid,
+          mailbox: mailboxName,
+          from: fromAddr,
+          subject: subjectTxt,
+          isCotefrete,
+          isCargas,
+        });
+      } catch (_) {}
+
+      if (!isCotefrete && !isCargas) {
+        stats.ignored += 1;
+        try {
+          console.log('[extract-debug] ignored message by filter', {
+            jobId,
+            companyId,
+            uid,
+            from: fromAddr,
+            subject: subjectTxt,
+          });
+        } catch (_) {}
+        continue;
+      }
+
+      stats.candidates += 1;
 
       const messageId = full.envelope.messageId || null;
       const sourceMessageId = messageId || `uid:${uid}:${mailboxName}`;
@@ -124,7 +229,19 @@ async function runExtractionJob(jobId, companyId) {
         .maybeSingle();
 
       if (existingError) throw existingError;
-      if (existing?.id) continue;
+      if (existing?.id) {
+        stats.duplicates += 1;
+        try {
+          console.log('[extract-debug] skipped duplicate message', {
+            jobId,
+            companyId,
+            uid,
+            sourceMessageId,
+            existingQuoteId: existing.id,
+          });
+        } catch (_) {}
+        continue;
+      }
 
       const date = full.envelope.date || null;
       const rawEml = full.source ? full.source.toString('utf8') : '';
@@ -139,8 +256,19 @@ async function runExtractionJob(jobId, companyId) {
       const html = parsed.html || '';
       const text = parsed.text || '';
 
+      try {
+        console.log('[extract-debug] parsed raw email', {
+          jobId,
+          companyId,
+          uid,
+          sourceMessageId,
+          textPreview: summarizeText(text, 180),
+          htmlPreview: summarizeText(html, 180),
+        });
+      } catch (_) {}
+
       if (isCotefrete) {
-        await processCotefrete({
+        const result = await processCotefrete({
           uid,
           client,
           companyId,
@@ -152,11 +280,23 @@ async function runExtractionJob(jobId, companyId) {
           text,
           html,
         });
+        if (result?.inserted) stats.inserted += 1;
+        if (result?.error) stats.errors += 1;
+        try {
+          console.log('[extract-debug] cotefrete result', {
+            jobId,
+            companyId,
+            uid,
+            sourceMessageId,
+            inserted: !!result?.inserted,
+            error: !!result?.error,
+          });
+        } catch (_) {}
         continue;
       }
 
       if (isCargas) {
-        await processCargas({
+        const result = await processCargas({
           uid,
           client,
           companyId,
@@ -168,6 +308,18 @@ async function runExtractionJob(jobId, companyId) {
           text,
           html,
         });
+        if (result?.inserted) stats.inserted += 1;
+        if (result?.error) stats.errors += 1;
+        try {
+          console.log('[extract-debug] cargas result', {
+            jobId,
+            companyId,
+            uid,
+            sourceMessageId,
+            inserted: !!result?.inserted,
+            error: !!result?.error,
+          });
+        } catch (_) {}
       }
     }
   } finally {
@@ -176,7 +328,11 @@ async function runExtractionJob(jobId, companyId) {
     } catch (_) {}
   }
 
-  return { success: true };
+  try {
+    console.log('[extract-debug] extraction summary', { jobId, companyId, ...stats });
+  } catch (_) {}
+
+  return { success: true, ...stats };
 }
 
 async function getJobUserId(jobId) {
@@ -195,6 +351,14 @@ async function processCotefrete(context) {
 
   try {
     const data = parseCotacaoCotefrete(text, html);
+    try {
+      console.log('[extract-debug] cotefrete parsed fields', {
+        companyId,
+        uid,
+        sourceMessageId,
+        parsed: data,
+      });
+    } catch (_) {}
     const contact_name = data.contact_name ?? null;
 
     const emailMatch = String(data.contact_email || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
@@ -247,6 +411,14 @@ async function processCotefrete(context) {
 
     if (itemError) throw itemError;
   } catch (err) {
+    try {
+      console.error('[extract-debug] cotefrete processing error', {
+        companyId,
+        uid,
+        sourceMessageId,
+        message: err.message || String(err),
+      });
+    } catch (_) {}
     if (quote?.id) {
       await serviceClient
         .from('quotes')
@@ -268,9 +440,12 @@ async function processCotefrete(context) {
         error_message: err.message || String(err),
       });
     }
+    return { inserted: false, error: true };
   } finally {
-    await markSeen(client, uid);
+    await ensureUnseen(client, uid);
   }
+
+  return { inserted: true, error: false };
 }
 
 async function processCargas(context) {
@@ -300,6 +475,14 @@ async function processCargas(context) {
     quoteId = quoteData.id;
 
     const data = parseCargas(text);
+    try {
+      console.log('[extract-debug] cargas parsed fields', {
+        companyId,
+        uid,
+        sourceMessageId,
+        parsed: data,
+      });
+    } catch (_) {}
 
     const { error: itemError } = await serviceClient.from('quote_items').insert({
       quote_id: quoteId,
@@ -325,20 +508,31 @@ async function processCargas(context) {
       })
       .eq('id', quoteId);
 
-    await markSeen(client, uid);
+    return { inserted: true, error: false };
   } catch (err) {
+    try {
+      console.error('[extract-debug] cargas processing error', {
+        companyId,
+        uid,
+        sourceMessageId,
+        message: err.message || String(err),
+      });
+    } catch (_) {}
     if (quoteId) {
       await serviceClient
         .from('quotes')
         .update({ status: 'error', error_message: err.message || String(err) })
         .eq('id', quoteId);
     }
+    return { inserted: false, error: true };
+  } finally {
+    await ensureUnseen(client, uid);
   }
 }
 
-async function markSeen(client, uid) {
+async function ensureUnseen(client, uid) {
   try {
-    await client.messageFlagsAdd(uid, ['\\Seen']);
+    await client.messageFlagsRemove(uid, ['\\Seen']);
   } catch (_) {}
 }
 
