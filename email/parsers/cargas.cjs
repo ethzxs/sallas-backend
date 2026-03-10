@@ -7,10 +7,6 @@ function pickCityUf(line) {
   return { city: match[1].trim(), uf: match[2].trim() };
 }
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
 function htmlToLooseText(html) {
   if (!html) return '';
 
@@ -54,11 +50,6 @@ function buildNormalizedLines(text, html) {
   return normalized;
 }
 
-<<<<<<< HEAD
-=======
-=======
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
 function cleanEmail(raw) {
   if (!raw) return null;
   return String(raw).replace(/^mailto:/i, '').replace(/[<>]/g, '').trim();
@@ -69,21 +60,12 @@ function extractEmail(text) {
   return match ? cleanEmail(match[0]) : null;
 }
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
 function isPlatformEmail(email) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) return false;
   return normalized.endsWith('@guiadotransporte.com.br') || normalized.endsWith('@cotefrete.com.br');
 }
 
-<<<<<<< HEAD
-=======
-=======
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
 function extractPhone(text) {
   const source = String(text || '');
   const match =
@@ -100,26 +82,10 @@ function sectionAfter(lines, headerRegex) {
   return { index, header: lines[index] };
 }
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
 function parseCargas(text, html) {
   const source = normalizeBrokenText(String(text || ''));
   const lines = buildNormalizedLines(text, html);
   const sourceJoined = lines.join('\n');
-<<<<<<< HEAD
-=======
-=======
-function parseCargas(text) {
-  const source = String(text || '');
-  const lines = source
-    .replace(/\r/g, '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
 
   let origin = { city: null, uf: null };
   let destination = { city: null, uf: null };
@@ -129,10 +95,6 @@ function parseCargas(text) {
     if (/^destino:/i.test(line)) destination = pickCityUf(line);
   }
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   if (!origin.city || !destination.city) {
     const origemDestinoRegex = /origem:\s*([^\n]+?)\s*-\s*([A-Z]{2}).*?destino:\s*([^\n]+?)\s*-\s*([A-Z]{2})/i;
     const joinedMatch = sourceJoined.match(origemDestinoRegex);
@@ -142,11 +104,6 @@ function parseCargas(text) {
     }
   }
 
-<<<<<<< HEAD
-=======
-=======
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   let notes = null;
   const obs = sectionAfter(lines, /^observa/i);
   const info = sectionAfter(lines, /^informa(c|ç)(oes|ções)\s+adicionais\s*:/i);
@@ -169,15 +126,7 @@ function parseCargas(text) {
       if (/^dados\s+de\s+contato\s*:/i.test(line)) break;
       if (/^atenciosamente\b/i.test(line)) break;
       if (/abrir\s+cota(c|ç)ao/i.test(line)) break;
-<<<<<<< HEAD
       if (extractPhone(line)) break;
-=======
-<<<<<<< HEAD
-      if (extractPhone(line)) break;
-=======
-      if (extractEmail(line) || extractPhone(line)) break;
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
 
       collected.push(line);
     }
@@ -199,17 +148,8 @@ function parseCargas(text) {
       const phoneMatch = line.match(/^telefone:\s*(.+)$/i);
       if (phoneMatch) contact_whatsapp = extractPhone(phoneMatch[1]) || phoneMatch[1].trim();
 
-<<<<<<< HEAD
       const foundEmail = extractEmail(line);
       if (!contact_email && foundEmail && !isPlatformEmail(foundEmail)) contact_email = foundEmail;
-=======
-<<<<<<< HEAD
-      const foundEmail = extractEmail(line);
-      if (!contact_email && foundEmail && !isPlatformEmail(foundEmail)) contact_email = foundEmail;
-=======
-      contact_email = contact_email || extractEmail(line);
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
       contact_whatsapp = contact_whatsapp || extractPhone(line);
     }
   } else {
@@ -217,10 +157,6 @@ function parseCargas(text) {
     if (regardsIndex >= 0) {
       contact_name = lines[regardsIndex + 1] ? lines[regardsIndex + 1].trim() : null;
       const tail = lines.slice(regardsIndex, regardsIndex + 12).join(' \n ');
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
       const tailEmail = extractEmail(tail);
       contact_email = tailEmail && !isPlatformEmail(tailEmail) ? tailEmail : null;
       contact_whatsapp = extractPhone(tail);
@@ -228,16 +164,6 @@ function parseCargas(text) {
       const fallbackEmail = extractEmail(sourceJoined || source);
       contact_email = fallbackEmail && !isPlatformEmail(fallbackEmail) ? fallbackEmail : null;
       contact_whatsapp = extractPhone(sourceJoined || source);
-<<<<<<< HEAD
-=======
-=======
-      contact_email = extractEmail(tail);
-      contact_whatsapp = extractPhone(tail);
-    } else {
-      contact_email = extractEmail(source);
-      contact_whatsapp = extractPhone(source);
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
     }
   }
 
@@ -253,20 +179,11 @@ function parseCargas(text) {
     }
   }
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   if (packages == null) {
     const pkgMatch = sourceJoined.match(/quantidade:\s*(\d+)/i);
     if (pkgMatch) packages = parseInt(pkgMatch[1], 10);
   }
 
-<<<<<<< HEAD
-=======
-=======
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   return {
     origemCidade: origin.city,
     origemUF: origin.uf,

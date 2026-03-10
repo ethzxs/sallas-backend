@@ -32,10 +32,6 @@ router.post('/api/extract-quotes', async (req, res) => {
   const token = authHeader.split(' ')[1];
   const { companyId } = req.body || {};
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   try {
     console.log('[extract-debug] request received', {
       companyId: companyId || null,
@@ -43,11 +39,6 @@ router.post('/api/extract-quotes', async (req, res) => {
     });
   } catch (_) {}
 
-<<<<<<< HEAD
-=======
-=======
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   if (!companyId) {
     return res.status(400).json({ error: 'companyId is required in body' });
   }
@@ -66,19 +57,10 @@ router.post('/api/extract-quotes', async (req, res) => {
 
   const userId = authData.user.id;
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   try {
     console.log('[extract-debug] authenticated user', { companyId, userId });
   } catch (_) {}
 
-<<<<<<< HEAD
-=======
-=======
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   const { data: memberships, error: memErr } = await userClient
     .from('memberships')
     .select('id,role,is_active')
@@ -94,10 +76,6 @@ router.post('/api/extract-quotes', async (req, res) => {
   }
 
   const role = memberships[0].role;
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   try {
     console.log('[extract-debug] membership validated', {
       companyId,
@@ -106,11 +84,6 @@ router.post('/api/extract-quotes', async (req, res) => {
       membershipCount: memberships.length,
     });
   } catch (_) {}
-<<<<<<< HEAD
-=======
-=======
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   if (!(role === 'admin' || role === 'comercial')) {
     return res.status(403).json({ error: 'Not authorized (insufficient role)' });
   }
@@ -132,10 +105,6 @@ router.post('/api/extract-quotes', async (req, res) => {
   const jobId = jobData.id;
 
   try {
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
     console.log('[extract-debug] job created', { companyId, userId, jobId });
   } catch (_) {}
 
@@ -172,14 +141,6 @@ router.post('/api/extract-quotes', async (req, res) => {
       console.log('[extract-debug] job result', { companyId, jobId, result });
     } catch (_) {}
 
-<<<<<<< HEAD
-=======
-=======
-    const { runExtractionJob } = require('../jobs/extractQuotes.job.cjs');
-    const result = await runExtractionJob(jobId, companyId);
-
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
     if (result?.success === false && result.reason === 'invalid_encryption_key') {
       await serviceClient
         .from('extraction_jobs')
@@ -218,10 +179,6 @@ router.post('/api/extract-quotes', async (req, res) => {
       .update({
         status: 'done',
         finished_at: new Date().toISOString(),
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
         quotes_found: Number(result?.candidates || 0),
         quotes_inserted: Number(result?.inserted || 0),
       })
@@ -238,34 +195,14 @@ router.post('/api/extract-quotes', async (req, res) => {
       totalMessages: Number(result?.totalMessages || 0),
       debug: Array.isArray(result?.debug) ? result.debug : [],
     });
-<<<<<<< HEAD
-=======
-=======
-        quotes_found: 0,
-        quotes_inserted: 0,
-      })
-      .eq('id', jobId);
-
-    return res.status(200).json({ jobId, quotesInserted: 0 });
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
   } catch (err) {
     const details = toErrorDetails(err);
 
     try {
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
       console.error('[extract-debug] route failure', { companyId, jobId, details });
     } catch (_) {}
 
     try {
-<<<<<<< HEAD
-=======
-=======
->>>>>>> b7e1dbe14d2c9eaca76123c0e97c52aada0d2cd8
->>>>>>> fffb9861dc4aee0dc9343b23d89b75b14a92a42d
       await serviceClient
         .from('extraction_jobs')
         .update({
